@@ -22,6 +22,13 @@ async function runTests() {
   assert.strictEqual(oebbCarrier.key, 'oebb', 'Should identify ÖBB leg');
   assert.strictEqual(oebbCarrier.name, 'ÖBB');
 
+  const dbLeg = {
+    line: { name: 'ICE 886', productName: 'ICE', adminCode: '80____' }
+  };
+  const dbCarrier = identifyLegCarrier(dbLeg);
+  assert.strictEqual(dbCarrier.key, 'db', 'Should identify Deutsche Bahn (DB) leg');
+  assert.strictEqual(dbCarrier.name, 'DB');
+
   const walkLeg = { walking: true };
   const walkCarrier = identifyLegCarrier(walkLeg);
   assert.strictEqual(walkCarrier.key, 'walk', 'Should identify walk leg');

@@ -98,6 +98,12 @@
   box-shadow: 0 2px 8px rgba(25, 60, 184, 0.35);
 }
 
+.badge-db {
+  background-color: #EC1B2D;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(236, 27, 45, 0.35);
+}
+
 .badge-westbahn {
   background-color: #009FE3;
   color: #ffffff;
@@ -155,6 +161,10 @@
 /* Carrier indicator stripe on the left edge */
 .stripe-oebb {
   border-left: 4px solid #193cb8;
+}
+
+.stripe-db {
+  border-left: 4px solid #EC1B2D;
 }
 
 .stripe-westbahn {

@@ -486,10 +486,15 @@ function createJourneyCard(journey, index) {
       <span class="inline-flex items-center px-3 py-1 rounded-full badge-oebb text-xs font-bold tracking-wide">
         <i data-lucide="train" class="w-3.5 h-3.5 mr-1.5"></i> ÖBB
       </span>`;
+  } else if (journey.carrierSummary?.primary === 'db') {
+    carrierBadgeHtml = `
+      <span class="inline-flex items-center px-3 py-1 rounded-full badge-db text-xs font-bold tracking-wide">
+        <i data-lucide="train" class="w-3.5 h-3.5 mr-1.5"></i> DB
+      </span>`;
   } else if (journey.carrierSummary?.primary === 'kombi') {
     carrierBadgeHtml = `
       <span class="inline-flex items-center px-3 py-1 rounded-full badge-kombi text-xs font-bold tracking-wide">
-        <i data-lucide="git-merge" class="w-3.5 h-3.5 mr-1.5"></i> Kombi: ÖBB & WESTbahn
+        <i data-lucide="git-merge" class="w-3.5 h-3.5 mr-1.5"></i> Kombi
       </span>`;
   } else {
     carrierBadgeHtml = `
@@ -980,6 +985,9 @@ function getMobileCarrierPill(journey) {
     if (primary === 'oebb') {
       return `<span class="${badgeClasses} badge-oebb" title="${escapeHtml(multiLabel)}">${escapeHtml(multiLabel)}</span>`;
     }
+    if (primary === 'db') {
+      return `<span class="${badgeClasses} badge-db" title="${escapeHtml(multiLabel)}">${escapeHtml(multiLabel)}</span>`;
+    }
     return `<span class="${badgeClasses} badge-local" title="${escapeHtml(multiLabel)}">${escapeHtml(multiLabel)}</span>`;
   }
 
@@ -991,6 +999,9 @@ function getMobileCarrierPill(journey) {
   }
   if (primary === 'oebb') {
     return `<span class="${badgeClasses} badge-oebb">${escapeHtml(firstLineName || 'ÖBB')}</span>`;
+  }
+  if (primary === 'db') {
+    return `<span class="${badgeClasses} badge-db">${escapeHtml(firstLineName || 'DB')}</span>`;
   }
   if (primary === 'kombi') {
     return `<span class="${badgeClasses} badge-kombi">Kombi</span>`;

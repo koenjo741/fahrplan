@@ -53,7 +53,28 @@ function identifyLegCarrier(leg) {
     };
   }
 
-  // 3. ÖBB detection
+  // 3. Deutsche Bahn (DB) detection: UIC Code 80 or DB operator/line
+  const isDbOperator = (
+    adminCode.startsWith('80') ||
+    opName.includes('deutsche bahn') ||
+    opName.includes('db fernverkehr') ||
+    opName.includes('db regio') ||
+    opName === 'db'
+  );
+
+  if (isDbOperator) {
+    return {
+      key: 'db',
+      name: 'DB',
+      operatorFullName: 'Deutsche Bahn AG',
+      badgeClass: 'badge-db',
+      brandColor: '#EC1B2D',
+      secondaryColor: '#ffffff',
+      isTrain: true
+    };
+  }
+
+  // 4. ÖBB detection
   const oebbProducts = ['RJX', 'RJ', 'ICE', 'IC', 'EC', 'REX', 'CJX', 'R', 'S', 'NJ', 'EN', 'D', 'NIGHTJET'];
   const isOebbProduct = oebbProducts.some(p => productName === p || lineName.startsWith(p + ' ') || lineName.startsWith(p));
   const isOebbOperator = (
