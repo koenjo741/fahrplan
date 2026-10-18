@@ -509,10 +509,26 @@ function createJourneyCard(journey, index) {
     .map(l => `<span class="inline-flex items-center justify-center w-32 bg-slate-800 text-slate-200 border border-slate-700/80 px-2 py-0.5 rounded text-xs font-mono font-bold mr-1.5 text-center">${escapeHtml(l.line.name)}</span>`)
     .join('');
 
+  // Transfer summary for display
+  let transferSummaryText = '';
+  if (!journey.isDirect && journey.legs && journey.legs.length > 1) {
+    const transferStops = [];
+    for (let i = 0; i < journey.legs.length - 1; i++) {
+      const leg = journey.legs[i];
+      if (leg.destination?.name && !leg.walking) {
+        transferStops.push(shortenStation(leg.destination.name));
+      }
+    }
+    const distinctStops = [...new Set(transferStops)];
+    if (distinctStops.length > 0) {
+      transferSummaryText = ` in ${distinctStops.join(', ')}`;
+    }
+  }
+
   // Transfer count label
   const transferLabel = journey.isDirect
     ? `<span class="text-emerald-400 font-semibold flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1"></i> Direktverbindung</span>`
-    : `<span class="text-amber-400 font-semibold flex items-center"><i data-lucide="git-branch" class="w-3.5 h-3.5 mr-1"></i> ${journey.transfers} ${journey.transfers === 1 ? 'Umstieg' : 'Umstiege'}</span>`;
+    : `<span class="text-amber-400 font-semibold flex items-center"><i data-lucide="git-branch" class="w-3.5 h-3.5 mr-1"></i> ${journey.transfers} ${journey.transfers === 1 ? 'Umstieg' : 'Umstiege'}${escapeHtml(transferSummaryText)}</span>`;
 
   card.innerHTML = `
     <!-- 📱 MOBILE ULTRA-COMPACT VIEW (ca. 52px Höhe -> 10 Züge gleichzeitig am Smartphone sichtbar!) -->
@@ -548,8 +564,8 @@ function createJourneyCard(journey, index) {
           <span>${escapeHtml(destShort)}</span>${arrPlat ? ` <span class="text-slate-500 text-[10px]">(${arrPlat})</span>` : ''}
         </div>
         <div class="flex items-center space-x-1 flex-shrink-0 text-[10px]">
-          <span class="${journey.isDirect ? 'text-emerald-400 font-semibold' : 'text-amber-400'}">
-            ${journey.isDirect ? 'Direkt' : `${journey.transfers} Umst.`}
+          <span class="${journey.isDirect ? 'text-emerald-400 font-semibold' : 'text-amber-400 font-medium'}">
+            ${journey.isDirect ? 'Direkt' : `${journey.transfers} Umst.${transferSummaryText ? ` (${escapeHtml(transferSummaryText.trim().replace(/^in\s*/, ''))})` : ''}`}
           </span>
           <i data-lucide="chevron-down" class="mobile-chevron w-3 h-3 text-slate-500 transition-transform duration-200"></i>
         </div>
@@ -655,19 +671,60 @@ function createJourneyCard(journey, index) {
 }
 
 /**
- * Render the step-by-step leg timeline for a journey.
+ * Render the step-by-step leg timeline for a journey, with highlighted transfer transition banners.
  */
 function renderLegsTimeline(legs) {
   if (!legs || legs.length === 0) return '';
 
-  return legs.map((leg, i) => {
+  const htmlParts = [];
+
+  for (let i = 0; i < legs.length; i++) {
+    const leg = legs[i];
+
+    // If walking is just an internal station platform change, incorporate it into the transfer banner
+    const isStationInternalWalk = leg.walking && (
+      !leg.origin?.name || 
+      leg.origin?.name === leg.destination?.name ||
+      (i > 0 && legs[i-1].destination?.name === leg.destination?.name)
+    );
+
+    if (isStationInternalWalk) {
+      continue;
+    }
+
+    // Render transfer transition banner between two train legs
+    if (i > 0) {
+      const prevLeg = legs[i - 1];
+      if (prevLeg && prevLeg.arrival && leg.departure) {
+        const waitMin = Math.round((new Date(leg.departure).getTime() - new Date(prevLeg.arrival).getTime()) / 60000);
+        const transferStationName = shortenStation(leg.origin?.name || prevLeg.destination?.name || 'Bahnhof');
+        const prevPlat = prevLeg.arrivalPlatform || prevLeg.destination?.platform;
+        const nextPlat = leg.departurePlatform || leg.origin?.platform;
+        const platInfo = prevPlat && nextPlat ? `Gl. ${prevPlat} → Gl. ${nextPlat}` : (nextPlat ? `Ab Gl. ${nextPlat}` : '');
+
+        htmlParts.push(`
+          <div class="flex items-center justify-between px-3.5 py-2 my-2 bg-amber-950/40 border border-amber-600/50 rounded-xl text-xs text-amber-200">
+            <div class="flex items-center space-x-2">
+              <i data-lucide="git-branch" class="w-4 h-4 text-amber-400 flex-shrink-0"></i>
+              <div>
+                <span class="font-bold">Umstieg in ${escapeHtml(transferStationName)}</span>
+                <span class="text-amber-300/80 font-normal ml-1.5">• ${waitMin >= 0 ? `${waitMin} Min. Übergangszeit` : 'Direkter Anschluss'}</span>
+              </div>
+            </div>
+            ${platInfo ? `<span class="text-[11px] font-mono text-amber-300 font-semibold bg-amber-900/60 px-2 py-0.5 rounded border border-amber-700/60">${escapeHtml(platInfo)}</span>` : ''}
+          </div>
+        `);
+      }
+    }
+
     if (leg.walking) {
-      return `
-        <div class="flex items-start space-x-3 text-xs text-slate-400 py-1 pl-2 border-l-2 border-dashed border-slate-700 ml-4">
+      htmlParts.push(`
+        <div class="flex items-start space-x-3 text-xs text-slate-400 py-1.5 pl-3 border-l-2 border-dashed border-slate-700 ml-4 my-1">
           <i data-lucide="footprints" class="w-4 h-4 text-slate-500"></i>
           <span>Fußweg (${leg.durationFormatted || 'ca. 5 Min.'}) zu ${escapeHtml(leg.destination?.name || '')}</span>
         </div>
-      `;
+      `);
+      continue;
     }
 
     const legCarrier = leg.carrier || {};
@@ -679,7 +736,7 @@ function renderLegsTimeline(legs) {
     const hasStopovers = leg.stopovers && leg.stopovers.length > 0;
     const stopoverCount = hasStopovers ? leg.stopovers.length : 0;
 
-    return `
+    htmlParts.push(`
       <div class="bg-slate-900/90 rounded-xl p-4 border border-slate-800 space-y-3">
         
         <!-- Leg Header -->
@@ -737,8 +794,10 @@ function renderLegsTimeline(legs) {
         </div>
 
       </div>
-    `;
-  }).join('');
+    `);
+  }
+
+  return htmlParts.join('');
 }
 
 /**
@@ -886,15 +945,46 @@ function formatDurationShort(minutes) {
 }
 
 /**
+ * Helper to strip internal train numbers for concise line pill display.
+ */
+function extractCleanLine(name) {
+  if (!name) return '';
+  return name.replace(/\s*\(Zug-Nr\.[^)]*\)/i, '').trim();
+}
+
+/**
  * Generate compact mobile badge pill for carrier and line.
- * All train badges are formatted with an equal fixed width and centered text.
+ * For connections with transfers, displays both train products (e.g. "R56 ➔ RJX").
  */
 function getMobileCarrierPill(journey) {
   const primary = journey.carrierSummary?.primary || 'other';
   const trainLegs = (journey.legs || []).filter(l => l.line);
-  const firstLineName = trainLegs[0]?.line?.name || '';
   const badgeClasses = 'w-[128px] inline-flex items-center justify-center text-center font-mono font-bold text-[10px] py-0.5 rounded tracking-tight flex-shrink-0 truncate';
   
+  if (trainLegs.length === 0) {
+    return `<span class="${badgeClasses} badge-local">Verbindung</span>`;
+  }
+
+  // Multi-leg journey with transfer: show both train lines
+  if (trainLegs.length > 1) {
+    const l1 = extractCleanLine(trainLegs[0]?.line?.name) || 'Zug';
+    const l2 = extractCleanLine(trainLegs[1]?.line?.name) || 'Zug';
+    const multiLabel = `${l1} ➔ ${l2}`;
+    
+    if (primary === 'kombi') {
+      return `<span class="${badgeClasses} badge-kombi" title="${escapeHtml(multiLabel)}">${escapeHtml(multiLabel)}</span>`;
+    }
+    if (primary === 'westbahn') {
+      return `<span class="${badgeClasses} badge-westbahn" title="${escapeHtml(multiLabel)}">${escapeHtml(multiLabel)}</span>`;
+    }
+    if (primary === 'oebb') {
+      return `<span class="${badgeClasses} badge-oebb" title="${escapeHtml(multiLabel)}">${escapeHtml(multiLabel)}</span>`;
+    }
+    return `<span class="${badgeClasses} badge-local" title="${escapeHtml(multiLabel)}">${escapeHtml(multiLabel)}</span>`;
+  }
+
+  // Direct connection
+  const firstLineName = trainLegs[0]?.line?.name || '';
   if (primary === 'westbahn') {
     const cleanNum = firstLineName.replace(/^WB\s*/i, '');
     return `<span class="${badgeClasses} badge-westbahn">WB ${escapeHtml(cleanNum || 'Zug')}</span>`;
