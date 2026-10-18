@@ -1,0 +1,22 @@
+{
+  "name": "fahrplan",
+  "version": "1.0.0",
+  "description": "Kombinierte Fahrplanabfrage in Österreich (ÖBB & WESTbahn)",
+  "scripts": {
+    "dev": "netlify dev",
+    "start": "netlify dev",
+    "test": "node tests/fahrplan.test.js",
+    "build": "echo \"Ready for Netlify\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@netlify/functions": "^6.0.2",
+    "hafas-client": "^6.3.6"
+  },
+  "devDependencies": {
+    "netlify-cli": "^27.13.0"
+  }
+}
