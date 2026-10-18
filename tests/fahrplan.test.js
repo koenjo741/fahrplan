@@ -58,13 +58,13 @@ async function runTests() {
   console.log('Test 2: Testing journey carrier summary...');
   const combinedSummary = summarizeJourneyCarriers([westbahnLeg, oebbLeg]);
   assert.strictEqual(combinedSummary.primary, 'kombi');
-  assert.strictEqual(combinedSummary.label, 'Kombi: WESTbahn & ÖBB');
+  assert.strictEqual(combinedSummary.label, 'WESTbahn & ÖBB');
   assert.strictEqual(combinedSummary.hasWestbahn, true);
   assert.strictEqual(combinedSummary.hasOebb, true);
 
   const intlCombinedSummary = summarizeJourneyCarriers([sncfLeg, renfeLeg]);
   assert.strictEqual(intlCombinedSummary.primary, 'kombi');
-  assert.strictEqual(intlCombinedSummary.label, 'Kombi: SNCF & Renfe');
+  assert.strictEqual(intlCombinedSummary.label, 'SNCF & Renfe');
   assert.strictEqual(intlCombinedSummary.isCombined, true);
 
   const pureWbSummary = summarizeJourneyCarriers([westbahnLeg]);

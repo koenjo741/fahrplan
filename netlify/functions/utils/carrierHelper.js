@@ -221,7 +221,7 @@ function summarizeJourneyCarriers(legs) {
     const label = listToSummarize.map(c => c.name).join(' & ');
     return {
       primary: 'kombi',
-      label: `Kombi: ${label}`,
+      label: label,
       badgeClass: 'badge-kombi',
       hasOebb,
       hasWestbahn,
