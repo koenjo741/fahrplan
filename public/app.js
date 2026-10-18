@@ -16,6 +16,9 @@ const state = {
   isLoading: false
 };
 
+// Global AbortController for cancelling searches
+let currentAbortController = null;
+
 // DOM Elements
 const elements = {
   form: document.getElementById('fahrplanForm'),
@@ -122,6 +125,11 @@ function setupEventListeners() {
   // Form submission
   elements.form.addEventListener('submit', (e) => {
     e.preventDefault();
+    if (state.isLoading) {
+      cancelSearch();
+      return;
+    }
+
     state.origin.name = elements.originInput.value.trim();
     state.origin.id = elements.originId.value;
     state.destination.name = elements.destinationInput.value.trim();
@@ -140,6 +148,14 @@ function setupEventListeners() {
     }
 
     performSearch();
+  });
+
+  // Submit button direct click to toggle / cancel search
+  elements.submitBtn.addEventListener('click', (e) => {
+    if (state.isLoading) {
+      e.preventDefault();
+      cancelSearch();
+    }
   });
 
   // "Jetzt" (Now) button
@@ -327,6 +343,12 @@ async function performSearch(paginationOptions = {}) {
     return;
   }
 
+  // Cancel prior active request if any
+  if (currentAbortController) {
+    currentAbortController.abort();
+  }
+  currentAbortController = new AbortController();
+
   setLoading(true);
 
   // Update Route Banner
@@ -349,7 +371,9 @@ async function performSearch(paginationOptions = {}) {
   if (paginationOptions.laterRef) params.append('laterRef', paginationOptions.laterRef);
 
   try {
-    const response = await fetch(`/api/fahrplan?${params.toString()}`);
+    const response = await fetch(`/api/fahrplan?${params.toString()}`, {
+      signal: currentAbortController.signal
+    });
     const data = await response.json();
 
     if (!response.ok || !data.success) {
@@ -362,10 +386,31 @@ async function performSearch(paginationOptions = {}) {
     renderResults(state.journeys);
     updatePaginationControls();
   } catch (err) {
+    if (err.name === 'AbortError') {
+      console.log('Fahrplan query cancelled by user.');
+      return;
+    }
     console.error('Search error:', err);
     showError(err.message);
   } finally {
+    currentAbortController = null;
     setLoading(false);
+  }
+}
+
+/**
+ * Cancel the currently running search query.
+ */
+function cancelSearch() {
+  if (currentAbortController) {
+    currentAbortController.abort();
+    currentAbortController = null;
+  }
+  setLoading(false);
+  if (state.journeys && state.journeys.length > 0) {
+    renderResults(state.journeys);
+  } else {
+    elements.loadingState.classList.add('hidden');
   }
 }
 
@@ -711,12 +756,28 @@ function setLoading(loading) {
     elements.errorState.classList.add('hidden');
     elements.emptyState.classList.add('hidden');
     elements.resultsContainer.innerHTML = '';
-    elements.submitBtn.disabled = true;
-    elements.submitBtn.classList.add('opacity-75', 'cursor-not-allowed');
+
+    // Switch button to "Suche abbrechen"
+    elements.submitBtn.innerHTML = `
+      <i data-lucide="x-circle" class="w-4 h-4 mr-1.5 animate-pulse"></i>
+      <span>Suche abbrechen</span>
+    `;
+    elements.submitBtn.className = 'w-full py-2.5 px-5 bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white font-semibold rounded-xl shadow-lg shadow-red-900/50 active:scale-[0.98] transition-all flex items-center justify-center space-x-1 cursor-pointer';
+    elements.submitBtn.disabled = false;
   } else {
     elements.loadingState.classList.add('hidden');
+
+    // Switch button back to "Verbindungen suchen"
+    elements.submitBtn.innerHTML = `
+      <i data-lucide="search" class="w-4 h-4 mr-1.5"></i>
+      <span>Verbindungen suchen</span>
+    `;
+    elements.submitBtn.className = 'w-full py-2.5 px-5 bg-gradient-to-r from-rose-600 via-rose-500 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-semibold rounded-xl shadow-lg shadow-rose-900/40 hover:shadow-rose-900/60 active:scale-[0.98] transition-all flex items-center justify-center space-x-2 cursor-pointer';
     elements.submitBtn.disabled = false;
-    elements.submitBtn.classList.remove('opacity-75', 'cursor-not-allowed');
+  }
+
+  if (window.lucide) {
+    lucide.createIcons();
   }
 }
 
