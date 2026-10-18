@@ -503,10 +503,10 @@ function createJourneyCard(journey, index) {
     ? `<span class="ml-2 text-xs font-bold text-rose-400 bg-rose-950/80 px-2 py-0.5 rounded border border-rose-800">${journey.departureDelay.text}</span>`
     : `<span class="ml-2 text-xs font-semibold text-emerald-400">Pünktlich</span>`;
 
-  // Train Products Label (30% wider fixed width so all train names fit comfortably)
+  // Train Products Label (Equal fixed width and height for all train badges, no line-breaks)
   const trainNames = journey.legs
     .filter(l => l.line)
-    .map(l => `<span class="inline-flex items-center justify-center w-32 bg-slate-800 text-slate-200 border border-slate-700/80 px-2 py-0.5 rounded text-xs font-mono font-bold mr-1.5 text-center">${escapeHtml(l.line.name)}</span>`)
+    .map(l => `<span class="inline-flex items-center justify-center w-44 h-7 whitespace-nowrap bg-slate-800 text-slate-200 border border-slate-700/80 px-2.5 rounded-lg text-xs font-mono font-bold mr-2 text-center flex-shrink-0">${escapeHtml(l.line.name)}</span>`)
     .join('');
 
   // Transfer summary for display
