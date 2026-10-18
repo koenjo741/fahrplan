@@ -142,6 +142,16 @@
   box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.4);
 }
 
+@media (max-width: 640px) {
+  .journey-card {
+    border-radius: 0.625rem;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  }
+  .journey-card:hover {
+    transform: none;
+  }
+}
+
 /* Carrier indicator stripe on the left edge */
 .stripe-oebb {
   border-left: 4px solid #E2001A;

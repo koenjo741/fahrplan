@@ -96,6 +96,23 @@ function initDefaults() {
   elements.destinationInput.value = state.destination.name;
   elements.destinationId.value = state.destination.id;
   elements.clearDestinationBtn.classList.remove('hidden');
+
+  // 1. Restore persisted preferences from localStorage
+  try {
+    const savedDirect = localStorage.getItem('fahrplan_direct');
+    if (savedDirect !== null) {
+      state.direct = (savedDirect === 'true');
+      elements.directCheckbox.checked = state.direct;
+    }
+
+    const savedCarrier = localStorage.getItem('fahrplan_carrier');
+    if (savedCarrier !== null && ['all', 'oebb', 'westbahn'].includes(savedCarrier)) {
+      state.carrier = savedCarrier;
+      elements.carrierSelect.value = state.carrier;
+    }
+  } catch (err) {
+    console.warn('localStorage read error:', err);
+  }
 }
 
 /**
@@ -113,6 +130,14 @@ function setupEventListeners() {
     state.time = elements.timeInput.value;
     state.carrier = elements.carrierSelect.value;
     state.direct = elements.directCheckbox.checked;
+
+    // Persist preferences
+    try {
+      localStorage.setItem('fahrplan_direct', state.direct ? 'true' : 'false');
+      localStorage.setItem('fahrplan_carrier', state.carrier);
+    } catch (err) {
+      console.warn('localStorage save error:', err);
+    }
 
     performSearch();
   });
@@ -184,11 +209,13 @@ function setupEventListeners() {
   // Live filter changes
   elements.carrierSelect.addEventListener('change', () => {
     state.carrier = elements.carrierSelect.value;
+    try { localStorage.setItem('fahrplan_carrier', state.carrier); } catch (e) {}
     performSearch();
   });
 
   elements.directCheckbox.addEventListener('change', () => {
     state.direct = elements.directCheckbox.checked;
+    try { localStorage.setItem('fahrplan_direct', state.direct ? 'true' : 'false'); } catch (e) {}
     performSearch();
   });
 }
@@ -373,13 +400,18 @@ function renderResults(journeys) {
 function createJourneyCard(journey, index) {
   const card = document.createElement('div');
   const carrierKey = journey.carrierSummary?.primary || 'other';
-  card.className = `journey-card stripe-${carrierKey} p-5 sm:p-6 animate-slide-in`;
-  card.style.animationDelay = `${index * 50}ms`;
+  card.className = `journey-card stripe-${carrierKey} rounded-xl overflow-hidden animate-slide-in`;
+  card.style.animationDelay = `${index * 30}ms`;
 
   const depTime = formatTimeOnly(journey.departureTime);
   const arrTime = formatTimeOnly(journey.arrivalTime);
+  const originShort = shortenStation(journey.originName);
+  const destShort = shortenStation(journey.destinationName);
+  const depPlat = journey.departurePlatform ? `Gl. ${journey.departurePlatform}` : '';
+  const arrPlat = journey.arrivalPlatform ? `Gl. ${journey.arrivalPlatform}` : '';
+  const mobilePill = getMobileCarrierPill(journey);
 
-  // Carrier Badge HTML
+  // Desktop Carrier Badge HTML
   let carrierBadgeHtml = '';
   if (journey.carrierSummary?.primary === 'westbahn') {
     carrierBadgeHtml = `
@@ -420,90 +452,137 @@ function createJourneyCard(journey, index) {
     : `<span class="text-amber-400 font-semibold flex items-center"><i data-lucide="git-branch" class="w-3.5 h-3.5 mr-1"></i> ${journey.transfers} ${journey.transfers === 1 ? 'Umstieg' : 'Umstiege'}</span>`;
 
   card.innerHTML = `
-    <!-- Top Row: Carrier Badge & Products -->
-    <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800/80">
-      <div class="flex items-center space-x-2">
-        ${carrierBadgeHtml}
-        <div class="flex flex-wrap items-center mt-1 sm:mt-0">${trainNames}</div>
+    <!-- 📱 MOBILE ULTRA-COMPACT VIEW (ca. 52px Höhe -> 10 Züge gleichzeitig am Smartphone sichtbar!) -->
+    <div class="sm:hidden block px-3 py-2 cursor-pointer mobile-card-trigger hover:bg-slate-800/40 transition-colors select-none">
+      <div class="flex items-center justify-between gap-1">
+        <!-- Times & Delay -->
+        <div class="flex items-baseline space-x-1.5">
+          <span class="font-display font-extrabold text-[15px] text-white tracking-tight">${depTime}</span>
+          <span class="text-slate-500 text-xs">→</span>
+          <span class="font-display font-extrabold text-[15px] text-white tracking-tight">${arrTime}</span>
+          ${journey.departureDelay?.isDelayed 
+            ? `<span class="text-[10px] font-bold text-rose-400 bg-rose-950 px-1 py-0.2 rounded border border-rose-800">${journey.departureDelay.text}</span>` 
+            : `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" title="Pünktlich"></span>`
+          }
+        </div>
+
+        <!-- Duration & Carrier Badge Pill -->
+        <div class="flex items-center space-x-1.5">
+          <span class="text-[11px] font-bold text-slate-300">${formatDurationShort(journey.durationMinutes)}</span>
+          ${mobilePill}
+        </div>
       </div>
-      <div class="text-xs text-slate-400">
-        ${transferLabel}
+
+      <!-- Line 2: Stations & Transfers -->
+      <div class="flex items-center justify-between text-[11px] text-slate-400 mt-0.5 leading-tight">
+        <div class="truncate max-w-[200px] text-slate-300">
+          <span>${escapeHtml(originShort)}</span>${depPlat ? ` <span class="text-slate-500 text-[10px]">(${depPlat})</span>` : ''}
+          <span class="text-slate-600">→</span>
+          <span>${escapeHtml(destShort)}</span>${arrPlat ? ` <span class="text-slate-500 text-[10px]">(${arrPlat})</span>` : ''}
+        </div>
+        <div class="flex items-center space-x-1 flex-shrink-0 text-[10px]">
+          <span class="${journey.isDirect ? 'text-emerald-400 font-semibold' : 'text-amber-400'}">
+            ${journey.isDirect ? 'Direkt' : `${journey.transfers} Umst.`}
+          </span>
+          <i data-lucide="chevron-down" class="mobile-chevron w-3 h-3 text-slate-500 transition-transform duration-200"></i>
+        </div>
       </div>
     </div>
 
-    <!-- Middle Row: Times, Stations, Duration -->
-    <div class="grid grid-cols-1 sm:grid-cols-[1fr,auto,1fr] gap-4 items-center py-4">
-      
-      <!-- Departure -->
-      <div class="space-y-1">
-        <div class="flex items-baseline space-x-2">
-          <span class="font-display text-2xl sm:text-3xl font-extrabold text-white tracking-tight">${depTime}</span>
-          ${depDelayHtml}
+    <!-- 💻 DESKTOP / TABLET SPACIOUS VIEW (sm:block) -->
+    <div class="hidden sm:block p-5 sm:p-6">
+      <!-- Top Row: Carrier Badge & Products -->
+      <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800/80">
+        <div class="flex items-center space-x-2">
+          ${carrierBadgeHtml}
+          <div class="flex flex-wrap items-center mt-1 sm:mt-0">${trainNames}</div>
         </div>
-        <div class="text-sm font-semibold text-slate-200 truncate" title="${escapeHtml(journey.originName)}">
-          ${escapeHtml(journey.originName)}
+        <div class="text-xs text-slate-400">
+          ${transferLabel}
         </div>
-        ${journey.departurePlatform ? `<div class="text-xs text-slate-400 font-medium"><i data-lucide="signpost" class="inline w-3 h-3 mr-1 text-slate-400"></i> Bahnsteig ${escapeHtml(journey.departurePlatform)}</div>` : ''}
       </div>
 
-      <!-- Duration Visual Indicator & Interactive Details Toggle -->
-      <div class="flex flex-col items-center justify-center">
-        <button
-          type="button"
-          class="duration-toggle-btn group flex flex-col items-center justify-center px-3.5 py-1.5 rounded-xl hover:bg-slate-800/80 active:scale-95 border border-transparent hover:border-slate-700/80 transition-all cursor-pointer"
-          title="Klicken für Fahrtverlauf &amp; Details"
-        >
-          <div class="text-xs font-bold text-slate-300 group-hover:text-rose-400 tracking-wider flex items-center transition-colors">
-            <i data-lucide="clock" class="w-3.5 h-3.5 mr-1 text-slate-400 group-hover:text-rose-400 transition-colors"></i>
-            <span>${journey.durationFormatted}</span>
-            <i data-lucide="chevron-down" class="duration-chevron w-3.5 h-3.5 ml-1 text-slate-500 group-hover:text-rose-400 transition-transform duration-200"></i>
+      <!-- Middle Row: Times, Stations, Duration -->
+      <div class="grid grid-cols-1 sm:grid-cols-[1fr,auto,1fr] gap-4 items-center py-4">
+        
+        <!-- Departure -->
+        <div class="space-y-1">
+          <div class="flex items-baseline space-x-2">
+            <span class="font-display text-2xl sm:text-3xl font-extrabold text-white tracking-tight">${depTime}</span>
+            ${depDelayHtml}
           </div>
-          <div class="w-20 sm:w-28 h-0.5 bg-gradient-to-r from-rose-500 via-amber-400 to-sky-400 my-1.5 relative">
-            <div class="w-2 h-2 rounded-full bg-slate-900 border-2 border-rose-500 absolute -top-0.5 left-0"></div>
-            <div class="w-2 h-2 rounded-full bg-slate-900 border-2 border-sky-400 absolute -top-0.5 right-0"></div>
+          <div class="text-sm font-semibold text-slate-200 truncate" title="${escapeHtml(journey.originName)}">
+            ${escapeHtml(journey.originName)}
           </div>
-          <div class="text-[11px] text-slate-400 group-hover:text-slate-300 transition-colors font-medium flex items-center space-x-1">
-            <span>${journey.isDirect ? 'Direkt' : `${journey.transfers} Umst.`}</span>
-            <span class="text-slate-600">•</span>
-            <span class="text-rose-400/90 font-medium group-hover:underline">Details</span>
-          </div>
-        </button>
-      </div>
-
-      <!-- Arrival -->
-      <div class="space-y-1 sm:text-right">
-        <div class="flex items-baseline space-x-2 sm:justify-end">
-          <span class="font-display text-2xl sm:text-3xl font-extrabold text-white tracking-tight">${arrTime}</span>
+          ${journey.departurePlatform ? `<div class="text-xs text-slate-400 font-medium"><i data-lucide="signpost" class="inline w-3 h-3 mr-1 text-slate-400"></i> Bahnsteig ${escapeHtml(journey.departurePlatform)}</div>` : ''}
         </div>
-        <div class="text-sm font-semibold text-slate-200 truncate" title="${escapeHtml(journey.destinationName)}">
-          ${escapeHtml(journey.destinationName)}
-        </div>
-        ${journey.arrivalPlatform ? `<div class="text-xs text-slate-400 font-medium"><i data-lucide="signpost" class="inline w-3 h-3 mr-1 text-slate-400"></i> Bahnsteig ${escapeHtml(journey.arrivalPlatform)}</div>` : ''}
-      </div>
 
+        <!-- Duration Visual Indicator & Interactive Details Toggle -->
+        <div class="flex flex-col items-center justify-center">
+          <button
+            type="button"
+            class="duration-toggle-btn group flex flex-col items-center justify-center px-3.5 py-1.5 rounded-xl hover:bg-slate-800/80 active:scale-95 border border-transparent hover:border-slate-700/80 transition-all cursor-pointer"
+            title="Klicken für Fahrtverlauf &amp; Details"
+          >
+            <div class="text-xs font-bold text-slate-300 group-hover:text-rose-400 tracking-wider flex items-center transition-colors">
+              <i data-lucide="clock" class="w-3.5 h-3.5 mr-1 text-slate-400 group-hover:text-rose-400 transition-colors"></i>
+              <span>${journey.durationFormatted}</span>
+              <i data-lucide="chevron-down" class="duration-chevron w-3.5 h-3.5 ml-1 text-slate-500 group-hover:text-rose-400 transition-transform duration-200"></i>
+            </div>
+            <div class="w-20 sm:w-28 h-0.5 bg-gradient-to-r from-rose-500 via-amber-400 to-sky-400 my-1.5 relative">
+              <div class="w-2 h-2 rounded-full bg-slate-900 border-2 border-rose-500 absolute -top-0.5 left-0"></div>
+              <div class="w-2 h-2 rounded-full bg-slate-900 border-2 border-sky-400 absolute -top-0.5 right-0"></div>
+            </div>
+            <div class="text-[11px] text-slate-400 group-hover:text-slate-300 transition-colors font-medium flex items-center space-x-1">
+              <span>${journey.isDirect ? 'Direkt' : `${journey.transfers} Umst.`}</span>
+              <span class="text-slate-600">•</span>
+              <span class="text-rose-400/90 font-medium group-hover:underline">Details</span>
+            </div>
+          </button>
+        </div>
+
+        <!-- Arrival -->
+        <div class="space-y-1 sm:text-right">
+          <div class="flex items-baseline space-x-2 sm:justify-end">
+            <span class="font-display text-2xl sm:text-3xl font-extrabold text-white tracking-tight">${arrTime}</span>
+          </div>
+          <div class="text-sm font-semibold text-slate-200 truncate" title="${escapeHtml(journey.destinationName)}">
+            ${escapeHtml(journey.destinationName)}
+          </div>
+          ${journey.arrivalPlatform ? `<div class="text-xs text-slate-400 font-medium"><i data-lucide="signpost" class="inline w-3 h-3 mr-1 text-slate-400"></i> Bahnsteig ${escapeHtml(journey.arrivalPlatform)}</div>` : ''}
+        </div>
+
+      </div>
     </div>
 
-    <!-- Collapsible Legs Details Timeline (opened via duration click) -->
-    <div class="legs-details-panel hidden mt-3 pt-3 border-t border-slate-800/80 space-y-3">
+    <!-- Collapsible Legs Details Timeline (opened via duration or mobile card click) -->
+    <div class="legs-details-panel hidden px-3 pb-3 sm:px-6 sm:pb-5 pt-2 sm:pt-4 border-t border-slate-800/80 space-y-3">
       ${renderLegsTimeline(journey.legs)}
     </div>
   `;
 
-  // Attach toggle listener on middle duration button
-  const durationBtn = card.querySelector('.duration-toggle-btn');
+  // Attach toggle listener on both mobile trigger and desktop duration button
+  const mobileTrigger = card.querySelector('.mobile-card-trigger');
+  const desktopDurationBtn = card.querySelector('.duration-toggle-btn');
   const detailsPanel = card.querySelector('.legs-details-panel');
-  const chevronIcon = durationBtn.querySelector('.duration-chevron');
+  const desktopChevron = desktopDurationBtn?.querySelector('.duration-chevron');
+  const mobileChevron = mobileTrigger?.querySelector('.mobile-chevron');
 
-  durationBtn.addEventListener('click', () => {
+  function toggleDetails() {
     const isHidden = detailsPanel.classList.contains('hidden');
     if (isHidden) {
       detailsPanel.classList.remove('hidden');
-      if (chevronIcon) chevronIcon.style.transform = 'rotate(180deg)';
+      if (desktopChevron) desktopChevron.style.transform = 'rotate(180deg)';
+      if (mobileChevron) mobileChevron.style.transform = 'rotate(180deg)';
     } else {
       detailsPanel.classList.add('hidden');
-      if (chevronIcon) chevronIcon.style.transform = 'rotate(0deg)';
+      if (desktopChevron) desktopChevron.style.transform = 'rotate(0deg)';
+      if (mobileChevron) mobileChevron.style.transform = 'rotate(0deg)';
     }
-  });
+  }
+
+  if (mobileTrigger) mobileTrigger.addEventListener('click', toggleDetails);
+  if (desktopDurationBtn) desktopDurationBtn.addEventListener('click', toggleDetails);
 
   return card;
 }
@@ -694,3 +773,53 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 }
+
+/**
+ * Shorten station name for compact mobile display.
+ */
+function shortenStation(name) {
+  if (!name) return '';
+  return name
+    .replace(/\s*\(Bahnsteige[^)]*\)/gi, '')
+    .replace(/\s*\(U\)/gi, '')
+    .replace(/\s*Bahnhst/gi, '')
+    .replace(/Linz\/Donau/gi, 'Linz')
+    .replace(/Wien Westbahnhof/gi, 'Wien West')
+    .replace(/Wien Hauptbahnhof/gi, 'Wien Hbf')
+    .replace(/Flughafen Wien Bahnhof/gi, 'Flughafen Wien')
+    .trim();
+}
+
+/**
+ * Format minutes into concise format (e.g. "1h 15m") for mobile display.
+ */
+function formatDurationShort(minutes) {
+  if (isNaN(minutes) || minutes < 0) return '--';
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+/**
+ * Generate compact mobile badge pill for carrier and line.
+ */
+function getMobileCarrierPill(journey) {
+  const primary = journey.carrierSummary?.primary || 'other';
+  const trainLegs = (journey.legs || []).filter(l => l.line);
+  const firstLineName = trainLegs[0]?.line?.name || '';
+  
+  if (primary === 'westbahn') {
+    const cleanNum = firstLineName.replace(/^WB\s*/i, '');
+    return `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold badge-westbahn">WB ${escapeHtml(cleanNum)}</span>`;
+  }
+  if (primary === 'oebb') {
+    return `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold badge-oebb">${escapeHtml(firstLineName)}</span>`;
+  }
+  if (primary === 'kombi') {
+    return `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold badge-kombi">Kombi</span>`;
+  }
+  return `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold badge-local">${escapeHtml(firstLineName || 'Zug')}</span>`;
+}
+
