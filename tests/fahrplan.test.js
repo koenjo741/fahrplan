@@ -29,6 +29,27 @@ async function runTests() {
   assert.strictEqual(dbCarrier.key, 'db', 'Should identify Deutsche Bahn (DB) leg');
   assert.strictEqual(dbCarrier.name, 'DB');
 
+  const sncfLeg = {
+    line: { name: 'TGV 8549', productName: 'TGV', adminCode: '87____' }
+  };
+  const sncfCarrier = identifyLegCarrier(sncfLeg);
+  assert.strictEqual(sncfCarrier.key, 'sncf', 'Should identify SNCF via UIC 87');
+  assert.strictEqual(sncfCarrier.name, 'SNCF');
+
+  const renfeLeg = {
+    line: { name: 'IC 4056', productName: 'IC', adminCode: '71____' }
+  };
+  const renfeCarrier = identifyLegCarrier(renfeLeg);
+  assert.strictEqual(renfeCarrier.key, 'renfe', 'Should identify Renfe via UIC 71');
+  assert.strictEqual(renfeCarrier.name, 'Renfe');
+
+  const sbbLeg = {
+    line: { name: 'EC 163', productName: 'EC', adminCode: '85____' }
+  };
+  const sbbCarrier = identifyLegCarrier(sbbLeg);
+  assert.strictEqual(sbbCarrier.key, 'sbb', 'Should identify SBB via UIC 85');
+  assert.strictEqual(sbbCarrier.name, 'SBB');
+
   const walkLeg = { walking: true };
   const walkCarrier = identifyLegCarrier(walkLeg);
   assert.strictEqual(walkCarrier.key, 'walk', 'Should identify walk leg');
@@ -37,8 +58,14 @@ async function runTests() {
   console.log('Test 2: Testing journey carrier summary...');
   const combinedSummary = summarizeJourneyCarriers([westbahnLeg, oebbLeg]);
   assert.strictEqual(combinedSummary.primary, 'kombi');
+  assert.strictEqual(combinedSummary.label, 'Kombi: WESTbahn & ÖBB');
   assert.strictEqual(combinedSummary.hasWestbahn, true);
   assert.strictEqual(combinedSummary.hasOebb, true);
+
+  const intlCombinedSummary = summarizeJourneyCarriers([sncfLeg, renfeLeg]);
+  assert.strictEqual(intlCombinedSummary.primary, 'kombi');
+  assert.strictEqual(intlCombinedSummary.label, 'Kombi: SNCF & Renfe');
+  assert.strictEqual(intlCombinedSummary.isCombined, true);
 
   const pureWbSummary = summarizeJourneyCarriers([westbahnLeg]);
   assert.strictEqual(pureWbSummary.primary, 'westbahn');

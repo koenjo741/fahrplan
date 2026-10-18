@@ -8,6 +8,38 @@
  * @param {Object} leg - Hafas leg object
  * @returns {Object} { key: 'westbahn'|'oebb'|'local'|'walk', name: string, badgeClass: string, isTrain: boolean }
  */
+/**
+ * Complete European UIC Railway Country Codes & Carrier Registry
+ */
+const EUROPEAN_UIC_CARRIERS = {
+  '81': { key: 'oebb', name: 'ÖBB', fullName: 'ÖBB-Personenverkehr AG', badgeClass: 'badge-oebb', brandColor: '#193cb8' },
+  '80': { key: 'db', name: 'DB', fullName: 'Deutsche Bahn AG', badgeClass: 'badge-db', brandColor: '#EC1B2D' },
+  '85': { key: 'sbb', name: 'SBB', fullName: 'Schweizerische Bundesbahnen', badgeClass: 'badge-sbb', brandColor: '#EB0000' },
+  '87': { key: 'sncf', name: 'SNCF', fullName: 'SNCF Voyageurs', badgeClass: 'badge-sncf', brandColor: '#7A003C' },
+  '71': { key: 'renfe', name: 'Renfe', fullName: 'Renfe Operadora', badgeClass: 'badge-renfe', brandColor: '#571C67' },
+  '83': { key: 'trenitalia', name: 'Trenitalia', fullName: 'Trenitalia / FS Italiane', badgeClass: 'badge-trenitalia', brandColor: '#D6001C' },
+  '84': { key: 'ns', name: 'NS', fullName: 'Nederlandse Spoorwegen', badgeClass: 'badge-ns', brandColor: '#003082' },
+  '88': { key: 'sncb', name: 'SNCB', fullName: 'SNCB / NMBS', badgeClass: 'badge-sncb', brandColor: '#004F9F' },
+  '54': { key: 'cd', name: 'ČD', fullName: 'České dráhy', badgeClass: 'badge-cd', brandColor: '#002C6C' },
+  '55': { key: 'mav', name: 'MÁV', fullName: 'MÁV-START', badgeClass: 'badge-mav', brandColor: '#003B7A' },
+  '51': { key: 'pkp', name: 'PKP', fullName: 'PKP Intercity', badgeClass: 'badge-pkp', brandColor: '#003366' },
+  '56': { key: 'zssk', name: 'ZSSK', fullName: 'Železničná spoločnosť Slovensko', badgeClass: 'badge-zssk', brandColor: '#D71920' },
+  '79': { key: 'sz', name: 'SŽ', fullName: 'Slovenske železnice', badgeClass: 'badge-sz', brandColor: '#009EE0' },
+  '78': { key: 'hz', name: 'HŽ', fullName: 'Hrvatske željeznice', badgeClass: 'badge-hz', brandColor: '#00407A' },
+  '72': { key: 'zs', name: 'ŽS', fullName: 'Železnice Srbije', badgeClass: 'badge-zs', brandColor: '#004B87' },
+  '74': { key: 'sj', name: 'SJ', fullName: 'Statens Järnvägar', badgeClass: 'badge-sj', brandColor: '#262626' },
+  '76': { key: 'vy', name: 'Vy', fullName: 'Vygruppen', badgeClass: 'badge-vy', brandColor: '#1E4E3D' },
+  '86': { key: 'dsb', name: 'DSB', fullName: 'Danske Statsbaner', badgeClass: 'badge-dsb', brandColor: '#BE1622' },
+  '94': { key: 'cp', name: 'CP', fullName: 'Comboios de Portugal', badgeClass: 'badge-cp', brandColor: '#006633' },
+  '70': { key: 'gb', name: 'National Rail', fullName: 'National Rail / Eurostar', badgeClass: 'badge-gb', brandColor: '#001F4D' },
+  '82': { key: 'cfl', name: 'CFL', fullName: 'Société Nationale des Chemins de Fer Luxembourgeois', badgeClass: 'badge-cfl', brandColor: '#D52B1E' }
+};
+
+/**
+ * Determine operator category and metadata for an individual leg.
+ * @param {Object} leg - Hafas leg object
+ * @returns {Object} Carrier object
+ */
 function identifyLegCarrier(leg) {
   if (!leg) return { key: 'unknown', name: 'Unbekannt', badgeClass: 'badge-gray', isTrain: false };
   if (leg.walking) {
@@ -20,7 +52,7 @@ function identifyLegCarrier(leg) {
   const productName = (leg.line?.productName || leg.line?.product || '').toUpperCase();
   const adminCode = leg.line?.adminCode || '';
 
-  // 1. WESTbahn detection
+  // 1. Specific Austrian private operators
   if (
     opName.includes('westbahn') ||
     opId.includes('westbahn') ||
@@ -41,7 +73,6 @@ function identifyLegCarrier(leg) {
     };
   }
 
-  // 2. City Airport Train (CAT)
   if (lineName.includes('CAT') || productName === 'CAT' || opName.includes('city airport train')) {
     return {
       key: 'cat',
@@ -53,50 +84,74 @@ function identifyLegCarrier(leg) {
     };
   }
 
-  // 3. Deutsche Bahn (DB) detection: UIC Code 80 or DB operator/line
-  const isDbOperator = (
-    adminCode.startsWith('80') ||
-    opName.includes('deutsche bahn') ||
-    opName.includes('db fernverkehr') ||
-    opName.includes('db regio') ||
-    opName === 'db'
-  );
-
-  if (isDbOperator) {
+  // Check Euskotren / Basque regional explicitly
+  if (adminCode.startsWith('5187') || opName.includes('euskotren')) {
     return {
-      key: 'db',
-      name: 'DB',
-      operatorFullName: 'Deutsche Bahn AG',
-      badgeClass: 'badge-db',
-      brandColor: '#EC1B2D',
+      key: 'euskotren',
+      name: 'Euskotren',
+      operatorFullName: 'Eusko Trenbideak',
+      badgeClass: 'badge-local',
+      brandColor: '#007A33',
+      isTrain: true
+    };
+  }
+
+  // 2. Identify by UIC Country Code from adminCode (e.g. '81____', '80____', '87____', '71____', '51____')
+  // Standard UIC 2-digit country codes in HAFAS are 2 digits padded with 4 underscores '____' or exactly 2 digits
+  const uicMatch = adminCode.match(/^(\d{2})(?:____|$)/);
+  if (uicMatch && EUROPEAN_UIC_CARRIERS[uicMatch[1]]) {
+    const c = EUROPEAN_UIC_CARRIERS[uicMatch[1]];
+    return {
+      key: c.key,
+      name: c.name,
+      operatorFullName: c.fullName,
+      badgeClass: c.badgeClass,
+      brandColor: c.brandColor,
       secondaryColor: '#ffffff',
       isTrain: true
     };
   }
 
-  // 4. ÖBB detection
-  const oebbProducts = ['RJX', 'RJ', 'ICE', 'IC', 'EC', 'REX', 'CJX', 'R', 'S', 'NJ', 'EN', 'D', 'NIGHTJET'];
-  const isOebbProduct = oebbProducts.some(p => productName === p || lineName.startsWith(p + ' ') || lineName.startsWith(p));
-  const isOebbOperator = (
+  // 3. Fallback name / product checks if adminCode is missing or special
+  if (opName.includes('sncf') || productName === 'TGV' || lineName.startsWith('TGV') || lineName.startsWith('INOUI') || lineName.startsWith('OUIGO')) {
+    const c = EUROPEAN_UIC_CARRIERS['87'];
+    return { key: c.key, name: c.name, operatorFullName: c.fullName, badgeClass: c.badgeClass, brandColor: c.brandColor, isTrain: true };
+  }
+  if (opName.includes('renfe') || productName === 'AVE' || lineName.startsWith('AVE') || lineName.startsWith('ALVIA')) {
+    const c = EUROPEAN_UIC_CARRIERS['71'];
+    return { key: c.key, name: c.name, operatorFullName: c.fullName, badgeClass: c.badgeClass, brandColor: c.brandColor, isTrain: true };
+  }
+  if (opName.includes('sbb') || opName.includes('cff') || opName.includes('ffs')) {
+    const c = EUROPEAN_UIC_CARRIERS['85'];
+    return { key: c.key, name: c.name, operatorFullName: c.fullName, badgeClass: c.badgeClass, brandColor: c.brandColor, isTrain: true };
+  }
+  if (opName.includes('trenitalia') || opName.includes('italo') || productName === 'FR' || lineName.startsWith('FR ')) {
+    const c = EUROPEAN_UIC_CARRIERS['83'];
+    return { key: c.key, name: c.name, operatorFullName: c.fullName, badgeClass: c.badgeClass, brandColor: c.brandColor, isTrain: true };
+  }
+  if (opName.includes('deutsche bahn') || opName.includes('db fernverkehr') || opName.includes('db regio') || opName === 'db') {
+    const c = EUROPEAN_UIC_CARRIERS['80'];
+    return { key: c.key, name: c.name, operatorFullName: c.fullName, badgeClass: c.badgeClass, brandColor: c.brandColor, isTrain: true };
+  }
+  if (opName.includes('ceske drahy') || opName.includes('české dráhy') || opName.includes('čd')) {
+    const c = EUROPEAN_UIC_CARRIERS['54'];
+    return { key: c.key, name: c.name, operatorFullName: c.fullName, badgeClass: c.badgeClass, brandColor: c.brandColor, isTrain: true };
+  }
+  if (opName.includes('mav') || opName.includes('máv')) {
+    const c = EUROPEAN_UIC_CARRIERS['55'];
+    return { key: c.key, name: c.name, operatorFullName: c.fullName, badgeClass: c.badgeClass, brandColor: c.brandColor, isTrain: true };
+  }
+  if (
     opName.includes('öbb') ||
     opName.includes('oebb') ||
     opName.includes('nahreisezug') ||
     opName.includes('fernverkehr') ||
-    opId.includes('nahreisezug') ||
-    opId.includes('fernverkehr') ||
-    adminCode.startsWith('81')
-  );
-
-  if (isOebbProduct || isOebbOperator) {
-    return {
-      key: 'oebb',
-      name: 'ÖBB',
-      operatorFullName: 'ÖBB-Personenverkehr AG',
-      badgeClass: 'badge-oebb',
-      brandColor: '#193cb8',
-      secondaryColor: '#ffffff',
-      isTrain: true
-    };
+    productName === 'RJX' ||
+    productName === 'RJ' ||
+    productName === 'CJX'
+  ) {
+    const c = EUROPEAN_UIC_CARRIERS['81'];
+    return { key: c.key, name: c.name, operatorFullName: c.fullName, badgeClass: c.badgeClass, brandColor: c.brandColor, isTrain: true };
   }
 
   // 4. Local municipal transit (Wiener Linien, etc.)
@@ -123,7 +178,7 @@ function identifyLegCarrier(leg) {
 }
 
 /**
- * Summarize carrier composition for a full journey.
+ * Summarize carrier composition for a full journey across all European operators.
  * @param {Array} legs - List of journey legs
  * @returns {Object} Carrier summary
  */
@@ -152,57 +207,54 @@ function summarizeJourneyCarriers(legs) {
     if (carrier.key === 'westbahn') hasWestbahn = true;
     if (carrier.key === 'cat') hasCat = true;
 
-    if (!distinctCarriers.has(carrier.key)) {
+    if (!distinctCarriers.has(carrier.key) && carrier.key !== 'walk' && carrier.key !== 'unknown') {
       distinctCarriers.set(carrier.key, carrier);
     }
   }
 
-  if (hasOebb && hasWestbahn) {
+  const carrierList = Array.from(distinctCarriers.values());
+  const mainCarriers = carrierList.filter(c => c.key !== 'local' && c.key !== 'other' && c.key !== 'euskotren');
+
+  // Multiple operators -> Kombi
+  if (carrierList.length > 1) {
+    const listToSummarize = mainCarriers.length > 1 ? mainCarriers : carrierList;
+    const label = listToSummarize.map(c => c.name).join(' & ');
     return {
       primary: 'kombi',
-      label: 'ÖBB & WESTbahn',
+      label: `Kombi: ${label}`,
       badgeClass: 'badge-kombi',
-      hasOebb: true,
-      hasWestbahn: true,
+      hasOebb,
+      hasWestbahn,
       hasCat,
       isCombined: true,
-      carriers: Array.from(distinctCarriers.values())
-    };
-  } else if (hasWestbahn) {
-    return {
-      primary: 'westbahn',
-      label: 'WESTbahn',
-      badgeClass: 'badge-westbahn',
-      hasOebb: false,
-      hasWestbahn: true,
-      hasCat,
-      isCombined: false,
-      carriers: Array.from(distinctCarriers.values())
-    };
-  } else if (hasOebb) {
-    return {
-      primary: 'oebb',
-      label: 'ÖBB',
-      badgeClass: 'badge-oebb',
-      hasOebb: true,
-      hasWestbahn: false,
-      hasCat,
-      isCombined: false,
-      carriers: Array.from(distinctCarriers.values())
+      carriers: carrierList
     };
   }
 
-  // Local / CAT / other
-  const firstCarrier = distinctCarriers.values().next().value;
+  // Single operator
+  if (carrierList.length === 1) {
+    const c = carrierList[0];
+    return {
+      primary: c.key,
+      label: c.name,
+      badgeClass: c.badgeClass,
+      hasOebb,
+      hasWestbahn,
+      hasCat,
+      isCombined: false,
+      carriers: carrierList
+    };
+  }
+
   return {
-    primary: firstCarrier?.key || 'other',
-    label: firstCarrier?.name || 'Regional',
-    badgeClass: firstCarrier?.badgeClass || 'badge-other',
+    primary: 'other',
+    label: 'Regional',
+    badgeClass: 'badge-other',
     hasOebb: false,
     hasWestbahn: false,
-    hasCat,
+    hasCat: false,
     isCombined: false,
-    carriers: Array.from(distinctCarriers.values())
+    carriers: []
   };
 }
 

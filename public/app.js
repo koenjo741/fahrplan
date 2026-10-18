@@ -474,34 +474,16 @@ function createJourneyCard(journey, index) {
   const arrPlat = journey.arrivalPlatform ? `Gl. ${journey.arrivalPlatform}` : '';
   const mobilePill = getMobileCarrierPill(journey);
 
-  // Desktop Carrier Badge HTML
-  let carrierBadgeHtml = '';
-  if (journey.carrierSummary?.primary === 'westbahn') {
-    carrierBadgeHtml = `
-      <span class="inline-flex items-center px-3 py-1 rounded-full badge-westbahn text-xs font-bold tracking-wide">
-        <i data-lucide="train" class="w-3.5 h-3.5 mr-1.5"></i> WESTbahn
-      </span>`;
-  } else if (journey.carrierSummary?.primary === 'oebb') {
-    carrierBadgeHtml = `
-      <span class="inline-flex items-center px-3 py-1 rounded-full badge-oebb text-xs font-bold tracking-wide">
-        <i data-lucide="train" class="w-3.5 h-3.5 mr-1.5"></i> ÖBB
-      </span>`;
-  } else if (journey.carrierSummary?.primary === 'db') {
-    carrierBadgeHtml = `
-      <span class="inline-flex items-center px-3 py-1 rounded-full badge-db text-xs font-bold tracking-wide">
-        <i data-lucide="train" class="w-3.5 h-3.5 mr-1.5"></i> DB
-      </span>`;
-  } else if (journey.carrierSummary?.primary === 'kombi') {
-    carrierBadgeHtml = `
-      <span class="inline-flex items-center px-3 py-1 rounded-full badge-kombi text-xs font-bold tracking-wide">
-        <i data-lucide="git-merge" class="w-3.5 h-3.5 mr-1.5"></i> Kombi
-      </span>`;
-  } else {
-    carrierBadgeHtml = `
-      <span class="inline-flex items-center px-3 py-1 rounded-full badge-local text-xs font-semibold">
-        ${escapeHtml(journey.carrierSummary?.label || 'Verbindung')}
-      </span>`;
-  }
+  // Desktop Carrier Badge HTML (Dynamic for all European UIC operators)
+  const primaryKey = journey.carrierSummary?.primary || 'other';
+  const carrierName = journey.carrierSummary?.label || 'Verbindung';
+  const badgeClass = journey.carrierSummary?.badgeClass || 'badge-local';
+  const iconName = primaryKey === 'kombi' ? 'git-merge' : 'train';
+
+  const carrierBadgeHtml = `
+    <span class="inline-flex items-center px-3 py-1 rounded-full ${badgeClass} text-xs font-bold tracking-wide">
+      <i data-lucide="${iconName}" class="w-3.5 h-3.5 mr-1.5"></i> ${escapeHtml(carrierName)}
+    </span>`;
 
   // Delay Badges
   const depDelayHtml = journey.departureDelay?.isDelayed
@@ -959,10 +941,11 @@ function extractCleanLine(name) {
 
 /**
  * Generate compact mobile badge pill for carrier and line.
- * For connections with transfers, displays both train products (e.g. "R56 ➔ RJX").
+ * For connections with transfers, displays both train products (e.g. "R56 ➔ RJX" or "TGV ➔ IC").
  */
 function getMobileCarrierPill(journey) {
   const primary = journey.carrierSummary?.primary || 'other';
+  const badgeClass = journey.carrierSummary?.badgeClass || 'badge-local';
   const trainLegs = (journey.legs || []).filter(l => l.line);
   const badgeClasses = 'w-[128px] inline-flex items-center justify-center text-center font-mono font-bold text-[10px] py-0.5 rounded tracking-tight flex-shrink-0 truncate';
   
@@ -975,20 +958,8 @@ function getMobileCarrierPill(journey) {
     const l1 = extractCleanLine(trainLegs[0]?.line?.name) || 'Zug';
     const l2 = extractCleanLine(trainLegs[1]?.line?.name) || 'Zug';
     const multiLabel = `${l1} ➔ ${l2}`;
-    
-    if (primary === 'kombi') {
-      return `<span class="${badgeClasses} badge-kombi" title="${escapeHtml(multiLabel)}">${escapeHtml(multiLabel)}</span>`;
-    }
-    if (primary === 'westbahn') {
-      return `<span class="${badgeClasses} badge-westbahn" title="${escapeHtml(multiLabel)}">${escapeHtml(multiLabel)}</span>`;
-    }
-    if (primary === 'oebb') {
-      return `<span class="${badgeClasses} badge-oebb" title="${escapeHtml(multiLabel)}">${escapeHtml(multiLabel)}</span>`;
-    }
-    if (primary === 'db') {
-      return `<span class="${badgeClasses} badge-db" title="${escapeHtml(multiLabel)}">${escapeHtml(multiLabel)}</span>`;
-    }
-    return `<span class="${badgeClasses} badge-local" title="${escapeHtml(multiLabel)}">${escapeHtml(multiLabel)}</span>`;
+    const pillClass = primary === 'kombi' ? 'badge-kombi' : badgeClass;
+    return `<span class="${badgeClasses} ${pillClass}" title="${escapeHtml(multiLabel)}">${escapeHtml(multiLabel)}</span>`;
   }
 
   // Direct connection
@@ -997,15 +968,6 @@ function getMobileCarrierPill(journey) {
     const cleanNum = firstLineName.replace(/^WB\s*/i, '');
     return `<span class="${badgeClasses} badge-westbahn">WB ${escapeHtml(cleanNum || 'Zug')}</span>`;
   }
-  if (primary === 'oebb') {
-    return `<span class="${badgeClasses} badge-oebb">${escapeHtml(firstLineName || 'ÖBB')}</span>`;
-  }
-  if (primary === 'db') {
-    return `<span class="${badgeClasses} badge-db">${escapeHtml(firstLineName || 'DB')}</span>`;
-  }
-  if (primary === 'kombi') {
-    return `<span class="${badgeClasses} badge-kombi">Kombi</span>`;
-  }
-  return `<span class="${badgeClasses} badge-local">${escapeHtml(firstLineName || 'Zug')}</span>`;
+  return `<span class="${badgeClasses} ${badgeClass}">${escapeHtml(firstLineName || 'Zug')}</span>`;
 }
 

@@ -122,6 +122,60 @@
   box-shadow: 0 2px 8px rgba(120, 190, 32, 0.35);
 }
 
+.badge-sncf {
+  background-color: #7A003C;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(122, 0, 60, 0.35);
+}
+
+.badge-renfe {
+  background-color: #571C67;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(87, 28, 103, 0.35);
+}
+
+.badge-sbb {
+  background-color: #EB0000;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(235, 0, 0, 0.35);
+}
+
+.badge-trenitalia {
+  background-color: #D6001C;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(214, 0, 28, 0.35);
+}
+
+.badge-cd {
+  background-color: #002C6C;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 44, 108, 0.35);
+}
+
+.badge-mav {
+  background-color: #003B7A;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 59, 122, 0.35);
+}
+
+.badge-ns {
+  background-color: #003082;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 48, 130, 0.35);
+}
+
+.badge-sncb {
+  background-color: #004F9F;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 79, 159, 0.35);
+}
+
+.badge-pkp {
+  background-color: #003366;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 51, 102, 0.35);
+}
+
 .badge-local {
   background-color: #475569;
   color: #f1f5f9;
@@ -178,6 +232,16 @@
 .stripe-local {
   border-left: 4px solid #64748b;
 }
+
+.stripe-sncf { border-left: 4px solid #7A003C; }
+.stripe-renfe { border-left: 4px solid #571C67; }
+.stripe-sbb { border-left: 4px solid #EB0000; }
+.stripe-trenitalia { border-left: 4px solid #D6001C; }
+.stripe-cd { border-left: 4px solid #002C6C; }
+.stripe-mav { border-left: 4px solid #003B7A; }
+.stripe-ns { border-left: 4px solid #003082; }
+.stripe-sncb { border-left: 4px solid #004F9F; }
+.stripe-pkp { border-left: 4px solid #003366; }
 
 /* Journey Timeline (for details view) */
 .timeline-stem {
