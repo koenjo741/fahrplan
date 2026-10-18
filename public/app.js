@@ -499,8 +499,8 @@ function createJourneyCard(journey, index) {
   card.innerHTML = `
     <!-- 📱 MOBILE ULTRA-COMPACT VIEW (ca. 52px Höhe -> 10 Züge gleichzeitig am Smartphone sichtbar!) -->
     <div class="sm:hidden block px-3 py-2 cursor-pointer mobile-card-trigger hover:bg-slate-800/40 transition-colors select-none">
-      <div class="flex items-center justify-between gap-1">
-        <!-- Times & Delay -->
+      <div class="grid grid-cols-[auto,1fr,auto] items-center gap-2">
+        <!-- Left: Times & Delay -->
         <div class="flex items-baseline space-x-1.5">
           <span class="font-display font-extrabold text-[15px] text-white tracking-tight">${depTime}</span>
           <span class="text-slate-500 text-xs">→</span>
@@ -511,9 +511,13 @@ function createJourneyCard(journey, index) {
           }
         </div>
 
-        <!-- Duration & Carrier Badge Pill -->
-        <div class="flex items-center space-x-1.5">
-          <span class="text-[11px] font-bold text-slate-300">${formatDurationShort(journey.durationMinutes)}</span>
+        <!-- Center: Fahrtdauer (Zentriert) -->
+        <div class="text-center">
+          <span class="inline-block text-[11px] font-bold text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded-md tracking-tight">${formatDurationShort(journey.durationMinutes)}</span>
+        </div>
+
+        <!-- Right: Carrier Badge Pill -->
+        <div class="flex items-center justify-end">
           ${mobilePill}
         </div>
       </div>
