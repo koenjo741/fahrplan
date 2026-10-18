@@ -446,19 +446,28 @@ function createJourneyCard(journey, index) {
         ${journey.departurePlatform ? `<div class="text-xs text-slate-400 font-medium"><i data-lucide="signpost" class="inline w-3 h-3 mr-1 text-slate-400"></i> Bahnsteig ${escapeHtml(journey.departurePlatform)}</div>` : ''}
       </div>
 
-      <!-- Duration Visual Indicator -->
-      <div class="flex flex-col items-center justify-center px-4 py-2 text-center">
-        <div class="text-xs font-bold text-slate-300 tracking-wider flex items-center">
-          <i data-lucide="clock" class="w-3.5 h-3.5 mr-1 text-slate-400"></i>
-          ${journey.durationFormatted}
-        </div>
-        <div class="w-24 sm:w-32 h-0.5 bg-gradient-to-r from-rose-500 via-amber-400 to-sky-400 my-1.5 relative">
-          <div class="w-2 h-2 rounded-full bg-slate-900 border-2 border-rose-500 absolute -top-0.5 left-0"></div>
-          <div class="w-2 h-2 rounded-full bg-slate-900 border-2 border-sky-400 absolute -top-0.5 right-0"></div>
-        </div>
-        <div class="text-[11px] text-slate-400 font-medium">
-          ${journey.isDirect ? 'Direkt' : `${journey.transfers} Umst.`}
-        </div>
+      <!-- Duration Visual Indicator & Interactive Details Toggle -->
+      <div class="flex flex-col items-center justify-center">
+        <button
+          type="button"
+          class="duration-toggle-btn group flex flex-col items-center justify-center px-3.5 py-1.5 rounded-xl hover:bg-slate-800/80 active:scale-95 border border-transparent hover:border-slate-700/80 transition-all cursor-pointer"
+          title="Klicken für Fahrtverlauf &amp; Details"
+        >
+          <div class="text-xs font-bold text-slate-300 group-hover:text-rose-400 tracking-wider flex items-center transition-colors">
+            <i data-lucide="clock" class="w-3.5 h-3.5 mr-1 text-slate-400 group-hover:text-rose-400 transition-colors"></i>
+            <span>${journey.durationFormatted}</span>
+            <i data-lucide="chevron-down" class="duration-chevron w-3.5 h-3.5 ml-1 text-slate-500 group-hover:text-rose-400 transition-transform duration-200"></i>
+          </div>
+          <div class="w-20 sm:w-28 h-0.5 bg-gradient-to-r from-rose-500 via-amber-400 to-sky-400 my-1.5 relative">
+            <div class="w-2 h-2 rounded-full bg-slate-900 border-2 border-rose-500 absolute -top-0.5 left-0"></div>
+            <div class="w-2 h-2 rounded-full bg-slate-900 border-2 border-sky-400 absolute -top-0.5 right-0"></div>
+          </div>
+          <div class="text-[11px] text-slate-400 group-hover:text-slate-300 transition-colors font-medium flex items-center space-x-1">
+            <span>${journey.isDirect ? 'Direkt' : `${journey.transfers} Umst.`}</span>
+            <span class="text-slate-600">•</span>
+            <span class="text-rose-400/90 font-medium group-hover:underline">Details</span>
+          </div>
+        </button>
       </div>
 
       <!-- Arrival -->
@@ -474,47 +483,25 @@ function createJourneyCard(journey, index) {
 
     </div>
 
-    <!-- Bottom Row: Expand / Collapse Legs Details Toggle -->
-    <div class="pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
-      <button type="button" class="details-toggle-btn text-rose-400 hover:text-rose-300 font-semibold transition-colors flex items-center space-x-1">
-        <span>Fahrtverlauf &amp; Details anzeigen</span>
-        <i data-lucide="chevron-down" class="w-4 h-4 transition-transform duration-200"></i>
-      </button>
-
-      <div class="flex items-center space-x-3">
-        <a 
-          href="${getBookingUrl(journey)}" 
-          target="_blank" 
-          rel="noopener noreferrer"
-          class="inline-flex items-center text-slate-400 hover:text-slate-200 transition-colors font-medium"
-        >
-          <span>Ticket / Buchung</span>
-          <i data-lucide="external-link" class="w-3.5 h-3.5 ml-1"></i>
-        </a>
-      </div>
-    </div>
-
-    <!-- Collapsible Legs Details Timeline -->
-    <div class="legs-details-panel hidden mt-4 pt-4 border-t border-slate-800/80 space-y-4">
+    <!-- Collapsible Legs Details Timeline (opened via duration click) -->
+    <div class="legs-details-panel hidden mt-3 pt-3 border-t border-slate-800/80 space-y-3">
       ${renderLegsTimeline(journey.legs)}
     </div>
   `;
 
-  // Attach toggle listener
-  const toggleBtn = card.querySelector('.details-toggle-btn');
+  // Attach toggle listener on middle duration button
+  const durationBtn = card.querySelector('.duration-toggle-btn');
   const detailsPanel = card.querySelector('.legs-details-panel');
-  const toggleIcon = toggleBtn.querySelector('i');
+  const chevronIcon = durationBtn.querySelector('.duration-chevron');
 
-  toggleBtn.addEventListener('click', () => {
+  durationBtn.addEventListener('click', () => {
     const isHidden = detailsPanel.classList.contains('hidden');
     if (isHidden) {
       detailsPanel.classList.remove('hidden');
-      toggleBtn.querySelector('span').textContent = 'Details ausblenden';
-      toggleIcon.style.transform = 'rotate(180deg)';
+      if (chevronIcon) chevronIcon.style.transform = 'rotate(180deg)';
     } else {
       detailsPanel.classList.add('hidden');
-      toggleBtn.querySelector('span').textContent = 'Fahrtverlauf & Details anzeigen';
-      toggleIcon.style.transform = 'rotate(0deg)';
+      if (chevronIcon) chevronIcon.style.transform = 'rotate(0deg)';
     }
   });
 
