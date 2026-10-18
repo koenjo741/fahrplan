@@ -1,8 +1,8 @@
 /* Custom Styles & Design System for FahrplanAT */
 
 :root {
-  --color-oebb: #E2001A;
-  --color-oebb-dark: #B00014;
+  --color-oebb: #193cb8;
+  --color-oebb-dark: #122c88;
   --color-westbahn: #009FE3;
   --color-westbahn-accent: #87B822;
   --color-cat: #78BE20;
@@ -93,9 +93,9 @@
 
 /* Operator Badges */
 .badge-oebb {
-  background-color: #E2001A;
+  background-color: #193cb8;
   color: #ffffff;
-  box-shadow: 0 2px 8px rgba(226, 0, 26, 0.35);
+  box-shadow: 0 2px 8px rgba(25, 60, 184, 0.35);
 }
 
 .badge-westbahn {
@@ -105,9 +105,9 @@
 }
 
 .badge-kombi {
-  background: linear-gradient(135deg, #E2001A 0%, #009FE3 100%);
+  background: linear-gradient(135deg, #193cb8 0%, #009FE3 100%);
   color: #ffffff;
-  box-shadow: 0 2px 10px rgba(226, 0, 26, 0.25);
+  box-shadow: 0 2px 10px rgba(25, 60, 184, 0.25);
 }
 
 .badge-cat {
@@ -154,7 +154,7 @@
 
 /* Carrier indicator stripe on the left edge */
 .stripe-oebb {
-  border-left: 4px solid #E2001A;
+  border-left: 4px solid #193cb8;
 }
 
 .stripe-westbahn {

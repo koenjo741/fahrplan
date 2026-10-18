@@ -72,7 +72,7 @@ function identifyLegCarrier(leg) {
       name: 'ÖBB',
       operatorFullName: 'ÖBB-Personenverkehr AG',
       badgeClass: 'badge-oebb',
-      brandColor: '#E2001A',
+      brandColor: '#193cb8',
       secondaryColor: '#ffffff',
       isTrain: true
     };
