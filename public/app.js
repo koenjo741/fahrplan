@@ -485,10 +485,10 @@ function createJourneyCard(journey, index) {
     ? `<span class="ml-2 text-xs font-bold text-rose-400 bg-rose-950/80 px-2 py-0.5 rounded border border-rose-800">${journey.departureDelay.text}</span>`
     : `<span class="ml-2 text-xs font-semibold text-emerald-400">Pünktlich</span>`;
 
-  // Train Products Label (Equal fixed width for all train designations)
+  // Train Products Label (30% wider fixed width so all train names fit comfortably)
   const trainNames = journey.legs
     .filter(l => l.line)
-    .map(l => `<span class="inline-flex items-center justify-center w-24 bg-slate-800 text-slate-200 border border-slate-700/80 px-2 py-0.5 rounded text-xs font-mono font-bold mr-1.5 text-center">${escapeHtml(l.line.name)}</span>`)
+    .map(l => `<span class="inline-flex items-center justify-center w-32 bg-slate-800 text-slate-200 border border-slate-700/80 px-2 py-0.5 rounded text-xs font-mono font-bold mr-1.5 text-center">${escapeHtml(l.line.name)}</span>`)
     .join('');
 
   // Transfer count label
@@ -670,7 +670,7 @@ function renderLegsTimeline(legs) {
             <span class="inline-flex items-center px-2 py-0.5 rounded font-bold ${legCarrier.badgeClass || 'badge-other'}">
               ${escapeHtml(legCarrier.name || 'Zug')}
             </span>
-            <span class="font-mono font-bold text-slate-200 inline-block min-w-[5rem] text-center">${escapeHtml(lineName)}</span>
+            <span class="font-mono font-bold text-slate-200 inline-block min-w-[6.5rem] text-center">${escapeHtml(lineName)}</span>
             <span class="text-slate-400 text-[11px]">${direction}</span>
           </div>
           <span class="text-slate-400 font-mono">${leg.durationFormatted}</span>
@@ -875,7 +875,7 @@ function getMobileCarrierPill(journey) {
   const primary = journey.carrierSummary?.primary || 'other';
   const trainLegs = (journey.legs || []).filter(l => l.line);
   const firstLineName = trainLegs[0]?.line?.name || '';
-  const badgeClasses = 'w-[78px] inline-flex items-center justify-center text-center font-mono font-bold text-[10px] py-0.5 rounded tracking-tight flex-shrink-0 truncate';
+  const badgeClasses = 'w-[102px] inline-flex items-center justify-center text-center font-mono font-bold text-[10px] py-0.5 rounded tracking-tight flex-shrink-0 truncate';
   
   if (primary === 'westbahn') {
     const cleanNum = firstLineName.replace(/^WB\s*/i, '');
