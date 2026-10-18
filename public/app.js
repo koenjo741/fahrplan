@@ -44,6 +44,7 @@ const elements = {
   resultsCountBadge: document.getElementById('resultsCountBadge'),
   resultsContainer: document.getElementById('resultsContainer'),
   loadingState: document.getElementById('loadingState'),
+  loadingText: document.getElementById('loadingText'),
   errorState: document.getElementById('errorState'),
   errorMessage: document.getElementById('errorMessage'),
   errorDetails: document.getElementById('errorDetails'),
@@ -823,6 +824,14 @@ function updatePaginationControls() {
 function setLoading(loading) {
   state.isLoading = loading;
   if (loading) {
+    if (elements.loadingText) {
+      const selectedCarrier = elements.carrierSelect ? elements.carrierSelect.value : state.carrier;
+      if (selectedCarrier === 'westbahn') {
+        elements.loadingText.textContent = 'Fahrpläne der Westbahn werden abgefragt.';
+      } else {
+        elements.loadingText.textContent = 'Fahrpläne werden abgefragt.';
+      }
+    }
     elements.loadingState.classList.remove('hidden');
     elements.errorState.classList.add('hidden');
     elements.emptyState.classList.add('hidden');
