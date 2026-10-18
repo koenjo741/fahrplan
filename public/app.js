@@ -522,9 +522,9 @@ function createJourneyCard(journey, index) {
         </div>
       </div>
 
-      <!-- Line 2: Stations & Transfers -->
-      <div class="flex items-center justify-between text-[11px] text-slate-400 mt-0.5 leading-tight">
-        <div class="truncate max-w-[200px] text-slate-300">
+      <!-- Line 2: Stations & Transfers (Expanded to use full width to the right) -->
+      <div class="flex items-center justify-between text-[11px] text-slate-400 mt-0.5 leading-tight gap-2">
+        <div class="truncate flex-1 min-w-0 pr-2 text-slate-300">
           <span>${escapeHtml(originShort)}</span>${depPlat ? ` <span class="text-slate-500 text-[10px]">(${depPlat})</span>` : ''}
           <span class="text-slate-600">→</span>
           <span>${escapeHtml(destShort)}</span>${arrPlat ? ` <span class="text-slate-500 text-[10px]">(${arrPlat})</span>` : ''}
@@ -875,7 +875,7 @@ function getMobileCarrierPill(journey) {
   const primary = journey.carrierSummary?.primary || 'other';
   const trainLegs = (journey.legs || []).filter(l => l.line);
   const firstLineName = trainLegs[0]?.line?.name || '';
-  const badgeClasses = 'w-[102px] inline-flex items-center justify-center text-center font-mono font-bold text-[10px] py-0.5 rounded tracking-tight flex-shrink-0 truncate';
+  const badgeClasses = 'w-[128px] inline-flex items-center justify-center text-center font-mono font-bold text-[10px] py-0.5 rounded tracking-tight flex-shrink-0 truncate';
   
   if (primary === 'westbahn') {
     const cleanNum = firstLineName.replace(/^WB\s*/i, '');
