@@ -111,9 +111,12 @@ function initDefaults() {
     }
 
     const savedCarrier = localStorage.getItem('fahrplan_carrier');
-    if (savedCarrier !== null && ['all', 'oebb', 'westbahn'].includes(savedCarrier)) {
+    if (savedCarrier !== null && ['all', 'westbahn'].includes(savedCarrier)) {
       state.carrier = savedCarrier;
       elements.carrierSelect.value = state.carrier;
+    } else {
+      state.carrier = 'all';
+      elements.carrierSelect.value = 'all';
     }
   } catch (err) {
     console.warn('localStorage read error:', err);
