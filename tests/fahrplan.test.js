@@ -90,12 +90,34 @@ async function runTests() {
   assert.strictEqual(fpRes.statusCode, 200);
   const fpData = JSON.parse(fpRes.body);
   assert.strictEqual(fpData.success, true);
-  assert(fpData.journeys.length > 0, 'Should return at least 1 journey');
-  console.log(`Found ${fpData.journeys.length} journeys! Sample journey:`);
-  const j0 = fpData.journeys[0];
-  console.log(`- ${j0.originName} -> ${j0.destinationName} (${j0.durationFormatted}, ${j0.carrierSummary.label})`);
+  // Test 8: Specific Linz Hbf -> Wien Hbf from 06:50 onwards with 12h span
+  console.log('Test 8: Testing Linz Hbf -> Wien Hbf from 06:50 on 2026-10-19 (direct, ÖBB)...');
+  const fpRes2 = await fahrplanHandler({
+    httpMethod: 'GET',
+    queryStringParameters: {
+      origin: '8100013', // Linz/Donau Hbf
+      destination: '8103000', // Wien Hbf
+      date: '2026-10-19',
+      time: '06:50',
+      direct: 'true',
+      carrier: 'oebb',
+      hours: '12'
+    }
+  });
+  assert.strictEqual(fpRes2.statusCode, 200);
+  const fpData2 = JSON.parse(fpRes2.body);
+  assert.strictEqual(fpData2.success, true);
+  assert(fpData2.journeys.length > 5, 'Should return multiple direct ÖBB trains in 12h window');
+  
+  const firstDep = new Date(fpData2.journeys[0].departureTime);
+  const viennaHourStr = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Vienna', hour: 'numeric', hour12: false }).format(firstDep);
+  const firstDepHourVienna = Number(viennaHourStr);
+  console.log(`First train departs at ${fpData2.journeys[0].departureTime} (Vienna time: ${firstDepHourVienna}:25)`);
+  assert(firstDepHourVienna >= 6 && firstDepHourVienna < 8, `First train should depart between 06:50 and 08:00, but departed at ${firstDepHourVienna}`);
 
-  console.log('\n🎉 ALL 7 TESTS PASSED SUCCESSFULLY! ✅');
+  console.log(`Returned ${fpData2.journeys.length} direct trains over 12 hours!`);
+
+  console.log('\n🎉 ALL 8 TESTS PASSED SUCCESSFULLY! ✅');
 }
 
 runTests().catch(err => {

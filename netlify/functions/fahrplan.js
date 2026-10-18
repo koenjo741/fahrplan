@@ -17,6 +17,48 @@ const HEADERS = {
 };
 
 /**
+ * Resolve Austrian local date and time (Europe/Vienna) to an exact UTC Date object,
+ * avoiding any UTC/server timezone offsets on Netlify/AWS Lambda.
+ */
+function parseViennaDateTime(dateStr, timeStr) {
+  if (!dateStr) return new Date();
+  const time = timeStr || '00:00';
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const [hour, min] = time.split(':').map(Number);
+
+  // Initial UTC guess
+  const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, min));
+
+  // Determine what time that is in Austrian local time (Europe/Vienna)
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Vienna',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+    hour12: false
+  });
+
+  const parts = formatter.formatToParts(utcGuess);
+  const viennaMap = {};
+  parts.forEach(p => { viennaMap[p.type] = p.value; });
+
+  const vYear = Number(viennaMap.year);
+  const vMonth = Number(viennaMap.month);
+  const vDay = Number(viennaMap.day);
+  let vHour = Number(viennaMap.hour);
+  if (vHour === 24) vHour = 0;
+  const vMin = Number(viennaMap.minute);
+
+  const viennaDateAsUTC = new Date(Date.UTC(vYear, vMonth - 1, vDay, vHour, vMin));
+  const diffMs = viennaDateAsUTC.getTime() - utcGuess.getTime();
+
+  return new Date(utcGuess.getTime() - diffMs);
+}
+
+/**
  * Resolve input to a valid station ID or stop object.
  * If already an ID, returns it. If text, searches HAFAS.
  */
@@ -48,6 +90,115 @@ async function resolveStation(stationInput) {
 }
 
 /**
+ * Transform a raw HAFAS journey into a clean, structured object.
+ */
+function formatJourney(j, idx, originStation, destinationStation) {
+  const legs = j.legs || [];
+  if (legs.length === 0) return null;
+
+  const firstLeg = legs[0];
+  const lastLeg = legs[legs.length - 1];
+
+  const plannedDep = firstLeg.plannedDeparture ? new Date(firstLeg.plannedDeparture) : new Date(firstLeg.departure);
+  const actualDep = firstLeg.departure ? new Date(firstLeg.departure) : plannedDep;
+  const plannedArr = lastLeg.plannedArrival ? new Date(lastLeg.plannedArrival) : new Date(lastLeg.arrival);
+  const actualArr = lastLeg.arrival ? new Date(lastLeg.arrival) : plannedArr;
+
+  const durationMinutes = Math.max(0, Math.round((actualArr - actualDep) / 60000));
+  const depDelay = formatDelay(firstLeg.departureDelay);
+  const arrDelay = formatDelay(lastLeg.arrivalDelay);
+
+  // Transfers count: train/bus/transit changes (excluding walks)
+  const transitLegs = legs.filter(l => !l.walking && l.line);
+  const transfers = Math.max(0, transitLegs.length - 1);
+  const isDirect = transfers === 0;
+
+  // Carrier summary
+  const carrierSummary = summarizeJourneyCarriers(legs);
+
+  // Detailed leg data
+  const enrichedLegs = legs.map((leg) => {
+    const legCarrier = identifyLegCarrier(leg);
+    const legPlannedDep = leg.plannedDeparture || leg.departure;
+    const legActualDep = leg.departure || legPlannedDep;
+    const legPlannedArr = leg.plannedArrival || leg.arrival;
+    const legActualArr = leg.arrival || legPlannedArr;
+    const legDurationMin = Math.round((new Date(legActualArr) - new Date(legActualDep)) / 60000);
+
+    // Stopovers / intermediate stops
+    const stopovers = (leg.stopovers || []).map(s => ({
+      name: s.stop?.name || 'Unbekannter Halt',
+      arrival: s.arrival,
+      plannedArrival: s.plannedArrival,
+      departure: s.departure,
+      plannedDeparture: s.plannedDeparture,
+      platform: s.platform || s.plannedPlatform || null
+    }));
+
+    // Remarks / alerts
+    const remarks = (leg.remarks || []).map(r => ({
+      text: r.text || r.summary || '',
+      type: r.type || 'hint',
+      code: r.code || ''
+    })).filter(r => r.text);
+
+    return {
+      walking: !!leg.walking,
+      carrier: legCarrier,
+      line: leg.line ? {
+        name: leg.line.name || '',
+        product: leg.line.product || '',
+        productName: leg.line.productName || leg.line.product || '',
+        direction: leg.direction || '',
+        adminCode: leg.line.adminCode || ''
+      } : null,
+      origin: {
+        name: leg.origin?.name || '',
+        id: leg.origin?.id || '',
+        platform: leg.plannedPlatform || leg.platform || null
+      },
+      destination: {
+        name: leg.destination?.name || '',
+        id: leg.destination?.id || '',
+        platform: leg.plannedArrivalPlatform || leg.arrivalPlatform || null
+      },
+      departure: legActualDep,
+      plannedDeparture: legPlannedDep,
+      arrival: legActualArr,
+      plannedArrival: legPlannedArr,
+      durationMinutes: legDurationMin,
+      durationFormatted: formatDuration(legDurationMin),
+      departureDelay: formatDelay(leg.departureDelay),
+      arrivalDelay: formatDelay(leg.arrivalDelay),
+      cancelled: !!leg.cancelled,
+      stopovers,
+      remarks
+    };
+  });
+
+  return {
+    id: j.refreshToken || `journey-${idx}-${actualDep.getTime()}`,
+    depTimestamp: actualDep.getTime(),
+    departureTime: actualDep.toISOString(),
+    plannedDepartureTime: plannedDep.toISOString(),
+    arrivalTime: actualArr.toISOString(),
+    plannedArrivalTime: plannedArr.toISOString(),
+    durationMinutes,
+    durationFormatted: formatDuration(durationMinutes),
+    transfers,
+    isDirect,
+    carrierSummary,
+    departureDelay: depDelay,
+    arrivalDelay: arrDelay,
+    originName: firstLeg.origin?.name || originStation.name,
+    destinationName: lastLeg.destination?.name || destinationStation.name,
+    departurePlatform: firstLeg.plannedPlatform || firstLeg.platform || null,
+    arrivalPlatform: lastLeg.plannedArrivalPlatform || lastLeg.arrivalPlatform || null,
+    legs: enrichedLegs
+  };
+}
+
+/**
  * Netlify Function Handler for timetable queries.
  */
 exports.handler = async (event) => {
@@ -62,9 +213,9 @@ exports.handler = async (event) => {
   const timeParam = params.time; // HH:mm
   const directOnly = params.direct === 'true' || params.direct === '1';
   const carrierFilter = (params.carrier || 'all').toLowerCase(); // 'all', 'oebb', 'westbahn'
-  const maxResults = Math.min(Math.max(parseInt(params.results || '8', 10), 1), 20);
   const earlierRef = params.earlierRef || null;
   const laterRef = params.laterRef || null;
+  const windowHours = Math.min(Math.max(parseInt(params.hours || '12', 10), 1), 24);
 
   if (!originInput || !destinationInput) {
     return {
@@ -84,148 +235,104 @@ exports.handler = async (event) => {
       resolveStation(destinationInput)
     ]);
 
-    // 2. Parse departure time
-    let departureDate = new Date();
-    if (dateParam && timeParam) {
-      // Parse local time string
-      const parsed = new Date(`${dateParam}T${timeParam}:00`);
-      if (!isNaN(parsed.getTime())) {
-        departureDate = parsed;
-      }
-    } else if (dateParam) {
-      const parsed = new Date(`${dateParam}T00:00:00`);
-      if (!isNaN(parsed.getTime())) {
-        departureDate = parsed;
-      }
-    }
+    // 2. Parse departure time in Europe/Vienna timezone
+    const startTime = parseViennaDateTime(dateParam, timeParam);
+    const endTime = new Date(startTime.getTime() + windowHours * 60 * 60 * 1000);
 
-    // 3. Configure HAFAS query options
-    const queryOptions = {
-      results: maxResults,
-      stopovers: true,
-      remarks: true,
-      tickets: false
-    };
+    // 3. Query journeys from HAFAS
+    const rawJourneys = [];
+    let paginationEarlierRef = null;
+    let paginationLaterRef = null;
 
-    if (earlierRef) {
-      queryOptions.earlierThan = earlierRef;
-    } else if (laterRef) {
-      queryOptions.laterThan = laterRef;
-    } else {
-      queryOptions.departure = departureDate;
-    }
-
-    // 4. Query journeys from HAFAS
-    const rawResult = await hafas.journeys(originStation.id, destinationStation.id, queryOptions);
-    const rawJourneys = rawResult.journeys || [];
-
-    // 5. Transform and enrich each journey
-    let formattedJourneys = rawJourneys.map((j, idx) => {
-      const legs = j.legs || [];
-      if (legs.length === 0) return null;
-
-      const firstLeg = legs[0];
-      const lastLeg = legs[legs.length - 1];
-
-      const plannedDep = firstLeg.plannedDeparture ? new Date(firstLeg.plannedDeparture) : new Date(firstLeg.departure);
-      const actualDep = firstLeg.departure ? new Date(firstLeg.departure) : plannedDep;
-      const plannedArr = lastLeg.plannedArrival ? new Date(lastLeg.plannedArrival) : new Date(lastLeg.arrival);
-      const actualArr = lastLeg.arrival ? new Date(lastLeg.arrival) : plannedArr;
-
-      const durationMinutes = Math.max(0, Math.round((actualArr - actualDep) / 60000));
-      const depDelay = formatDelay(firstLeg.departureDelay);
-      const arrDelay = formatDelay(lastLeg.arrivalDelay);
-
-      // Transfers count: train/bus/transit changes (excluding walks)
-      const transitLegs = legs.filter(l => !l.walking && l.line);
-      const transfers = Math.max(0, transitLegs.length - 1);
-      const isDirect = transfers === 0;
-
-      // Carrier summary
-      const carrierSummary = summarizeJourneyCarriers(legs);
-
-      // Detailed leg data
-      const enrichedLegs = legs.map((leg) => {
-        const legCarrier = identifyLegCarrier(leg);
-        const legPlannedDep = leg.plannedDeparture || leg.departure;
-        const legActualDep = leg.departure || legPlannedDep;
-        const legPlannedArr = leg.plannedArrival || leg.arrival;
-        const legActualArr = leg.arrival || legPlannedArr;
-        const legDurationMin = Math.round((new Date(legActualArr) - new Date(legActualDep)) / 60000);
-
-        // Stopovers / intermediate stops
-        const stopovers = (leg.stopovers || []).map(s => ({
-          name: s.stop?.name || 'Unbekannter Halt',
-          arrival: s.arrival,
-          plannedArrival: s.plannedArrival,
-          departure: s.departure,
-          plannedDeparture: s.plannedDeparture,
-          platform: s.platform || s.plannedPlatform || null
-        }));
-
-        // Remarks / alerts
-        const remarks = (leg.remarks || []).map(r => ({
-          text: r.text || r.summary || '',
-          type: r.type || 'hint',
-          code: r.code || ''
-        })).filter(r => r.text);
-
-        return {
-          walking: !!leg.walking,
-          carrier: legCarrier,
-          line: leg.line ? {
-            name: leg.line.name || '',
-            product: leg.line.product || '',
-            productName: leg.line.productName || leg.line.product || '',
-            direction: leg.direction || '',
-            adminCode: leg.line.adminCode || ''
-          } : null,
-          origin: {
-            name: leg.origin?.name || '',
-            id: leg.origin?.id || '',
-            platform: leg.plannedPlatform || leg.platform || null
-          },
-          destination: {
-            name: leg.destination?.name || '',
-            id: leg.destination?.id || '',
-            platform: leg.plannedArrivalPlatform || leg.arrivalPlatform || null
-          },
-          departure: legActualDep,
-          plannedDeparture: legPlannedDep,
-          arrival: legActualArr,
-          plannedArrival: legPlannedArr,
-          durationMinutes: legDurationMin,
-          durationFormatted: formatDuration(legDurationMin),
-          departureDelay: formatDelay(leg.departureDelay),
-          arrivalDelay: formatDelay(leg.arrivalDelay),
-          cancelled: !!leg.cancelled,
-          stopovers,
-          remarks
-        };
-      });
-
-      return {
-        id: j.refreshToken || `journey-${idx}-${actualDep.getTime()}`,
-        departureTime: actualDep.toISOString(),
-        plannedDepartureTime: plannedDep.toISOString(),
-        arrivalTime: actualArr.toISOString(),
-        plannedArrivalTime: plannedArr.toISOString(),
-        durationMinutes,
-        durationFormatted: formatDuration(durationMinutes),
-        transfers,
-        isDirect,
-        carrierSummary,
-        departureDelay: depDelay,
-        arrivalDelay: arrDelay,
-        originName: firstLeg.origin?.name || originStation.name,
-        destinationName: lastLeg.destination?.name || destinationStation.name,
-        departurePlatform: firstLeg.plannedPlatform || firstLeg.platform || null,
-        arrivalPlatform: lastLeg.plannedArrivalPlatform || lastLeg.arrivalPlatform || null,
-        legs: enrichedLegs
+    if (earlierRef || laterRef) {
+      // Single-batch pagination request
+      const queryOptions = {
+        results: 10,
+        stopovers: true,
+        remarks: true,
+        tickets: false
       };
-    }).filter(Boolean);
+      if (earlierRef) queryOptions.earlierThan = earlierRef;
+      if (laterRef) queryOptions.laterThan = laterRef;
 
-    // Apply filters
+      const res = await hafas.journeys(originStation.id, destinationStation.id, queryOptions);
+      if (res.journeys) rawJourneys.push(...res.journeys);
+      paginationEarlierRef = res.earlierRef || null;
+      paginationLaterRef = res.laterRef = res.laterRef || null;
+    } else {
+      // 12-hour window search: iterate until endTime is reached or max 6 iterations
+      let currentLaterRef = null;
+      let iterations = 0;
+      const MAX_ITERATIONS = 6;
+
+      while (iterations < MAX_ITERATIONS) {
+        iterations++;
+        const queryOptions = {
+          results: 10,
+          stopovers: true,
+          remarks: true,
+          tickets: false
+        };
+
+        if (currentLaterRef) {
+          queryOptions.laterThan = currentLaterRef;
+        } else {
+          queryOptions.departure = startTime;
+        }
+
+        const res = await hafas.journeys(originStation.id, destinationStation.id, queryOptions);
+        if (!paginationEarlierRef && res.earlierRef) {
+          paginationEarlierRef = res.earlierRef;
+        }
+
+        const batch = res.journeys || [];
+        if (batch.length === 0) break;
+
+        rawJourneys.push(...batch);
+        paginationLaterRef = res.laterRef || null;
+
+        const lastLeg = batch[batch.length - 1]?.legs?.[0];
+        const lastDep = lastLeg ? new Date(lastLeg.departure) : null;
+
+        // If the latest departure has reached or passed endTime, or no further ref, stop
+        if (!res.laterRef || (lastDep && lastDep >= endTime)) {
+          break;
+        }
+        currentLaterRef = res.laterRef;
+      }
+    }
+
+    // 4. Transform, deduplicate and strictly filter
+    const seenKeys = new Set();
+    let formattedJourneys = [];
+
+    for (let i = 0; i < rawJourneys.length; i++) {
+      const formatted = formatJourney(rawJourneys[i], i, originStation, destinationStation);
+      if (!formatted) continue;
+
+      // Unique key: departure timestamp + first leg line name
+      const firstLegLine = formatted.legs[0]?.line?.name || 'train';
+      const key = `${formatted.depTimestamp}-${firstLegLine}`;
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+
+      // Strict filter: only trains >= requested startTime (unless paginating backwards)
+      if (!earlierRef && formatted.depTimestamp < startTime.getTime()) {
+        continue;
+      }
+
+      // 12-hour window limit (unless paginating forwards)
+      if (!laterRef && formatted.depTimestamp > endTime.getTime()) {
+        continue;
+      }
+
+      formattedJourneys.push(formatted);
+    }
+
+    // Sort strictly chronologically by departure time
+    formattedJourneys.sort((a, b) => a.depTimestamp - b.depTimestamp);
+
+    // 5. Apply filters
     if (directOnly) {
       formattedJourneys = formattedJourneys.filter(j => j.isDirect);
     }
@@ -246,12 +353,15 @@ exports.handler = async (event) => {
           destination: destinationStation,
           date: dateParam || new Date().toISOString().slice(0, 10),
           time: timeParam || new Date().toTimeString().slice(0, 5),
+          startISO: startTime.toISOString(),
+          endISO: endTime.toISOString(),
+          windowHours,
           carrierFilter,
           directOnly
         },
         pagination: {
-          earlierRef: rawResult.earlierRef || null,
-          laterRef: rawResult.laterRef || null
+          earlierRef: paginationEarlierRef,
+          laterRef: paginationLaterRef
         },
         count: formattedJourneys.length,
         journeys: formattedJourneys

@@ -315,7 +315,7 @@ async function performSearch(paginationOptions = {}) {
     time: elements.timeInput.value,
     carrier: elements.carrierSelect.value,
     direct: elements.directCheckbox.checked ? 'true' : 'false',
-    results: '8'
+    hours: '12'
   });
 
   if (paginationOptions.earlierRef) params.append('earlierRef', paginationOptions.earlierRef);
@@ -355,7 +355,7 @@ function renderResults(journeys) {
   }
 
   elements.emptyState.classList.add('hidden');
-  elements.resultsCountBadge.textContent = `${journeys.length} ${journeys.length === 1 ? 'Zug' : 'Züge'}`;
+  elements.resultsCountBadge.textContent = `${journeys.length} ${journeys.length === 1 ? 'Zug' : 'Züge'} (nächste 12 Std.)`;
 
   journeys.forEach((journey, index) => {
     const card = createJourneyCard(journey, index);
