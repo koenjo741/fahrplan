@@ -49,6 +49,8 @@ const elements = {
   errorDetails: document.getElementById('errorDetails'),
   retryBtn: document.getElementById('retryBtn'),
   emptyState: document.getElementById('emptyState'),
+  emptyStateAction: document.getElementById('emptyStateAction'),
+  showTransfersBtn: document.getElementById('showTransfersBtn'),
   earlierControls: document.getElementById('earlierControls'),
   loadEarlierBtn: document.getElementById('loadEarlierBtn'),
   laterControls: document.getElementById('laterControls'),
@@ -232,6 +234,14 @@ function setupEventListeners() {
   elements.directCheckbox.addEventListener('change', () => {
     state.direct = elements.directCheckbox.checked;
     try { localStorage.setItem('fahrplan_direct', state.direct ? 'true' : 'false'); } catch (e) {}
+    performSearch();
+  });
+
+  // Action button in empty state to search with transfers
+  elements.showTransfersBtn?.addEventListener('click', () => {
+    elements.directCheckbox.checked = false;
+    state.direct = false;
+    try { localStorage.setItem('fahrplan_direct', 'false'); } catch (e) {}
     performSearch();
   });
 }
@@ -423,6 +433,14 @@ function renderResults(journeys) {
   if (!journeys || journeys.length === 0) {
     elements.emptyState.classList.remove('hidden');
     elements.resultsCountBadge.textContent = '0 Züge';
+    if (state.direct) {
+      elements.emptyStateAction?.classList.remove('hidden');
+    } else {
+      elements.emptyStateAction?.classList.add('hidden');
+    }
+    if (window.lucide) {
+      lucide.createIcons();
+    }
     return;
   }
 
