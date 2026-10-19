@@ -1,7 +1,7 @@
 {
   "name": "fahrplan",
-  "version": "1.3.12",
-  "description": "Kombinierte Fahrplanabfrage in Österreich (ÖBB & WESTbahn)",
+  "version": "1.4.0",
+  "description": "Zugfahrpläne Europas (Fahrpläne EU)",
   "scripts": {
     "dev": "netlify dev",
     "start": "netlify dev",

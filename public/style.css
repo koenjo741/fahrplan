@@ -8,6 +8,45 @@
   --color-cat: #78BE20;
 }
 
+/* Date and Time Picker Indicators matching slate-500 (#64748b) and hover slate-300 (#cbd5e1) */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  filter: invert(48%) sepia(13%) saturate(666%) hue-rotate(177deg) brightness(93%) contrast(87%);
+  opacity: 1;
+  transition: filter 0.15s ease, opacity 0.15s ease;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="time"]::-webkit-calendar-picker-indicator:hover {
+  filter: invert(85%) sepia(8%) saturate(300%) hue-rotate(180deg) brightness(100%) contrast(95%);
+}
+
+/* Search Action Buttons */
+.btn-search-submit {
+  background: linear-gradient(to right, #5EFCE8, #736EFE);
+  color: #ffffff;
+  font-weight: 400;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 10px 25px -5px rgba(115, 110, 254, 0.45);
+}
+
+.btn-search-submit:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 12px 28px -5px rgba(115, 110, 254, 0.6);
+}
+
+.btn-search-cancel {
+  background: linear-gradient(to right, #e11d48, #f43f5e, #f59e0b);
+  color: #ffffff;
+  box-shadow: 0 10px 25px -5px rgba(225, 29, 72, 0.45);
+}
+
+.btn-search-cancel:hover {
+  background: linear-gradient(to right, #f43f5e, #fbbf24);
+  box-shadow: 0 12px 28px -5px rgba(225, 29, 72, 0.6);
+}
+
 /* Glassmorphism Panel */
 .glass-panel {
   background: rgba(15, 23, 42, 0.75);

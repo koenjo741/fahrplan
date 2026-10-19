@@ -6,19 +6,16 @@ const {
   formatDuration,
   formatDelay
 } = require('./utils/carrierHelper');
+const { handleCorsPreflight, jsonResponse } = require('./utils/httpHelper');
 
 const hafas = createClient(oebbProfile, 'oebb-westbahn-fahrplan-v1');
 
-const HEADERS = {
-  'Content-Type': 'application/json; charset=utf-8',
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
-};
-
 /**
  * Resolve Austrian local date and time (Europe/Vienna) to an exact UTC Date object,
- * avoiding any UTC/server timezone offsets on Netlify/AWS Lambda.
+ * avoiding UTC/server timezone offsets on Netlify/AWS Lambda.
+ * @param {string} dateStr - YYYY-MM-DD
+ * @param {string} timeStr - HH:mm
+ * @returns {Date} UTC Date corresponding to Vienna local time
  */
 function parseViennaDateTime(dateStr, timeStr) {
   if (!dateStr) return new Date();
@@ -61,6 +58,8 @@ function parseViennaDateTime(dateStr, timeStr) {
 /**
  * Resolve input to a valid station ID or stop object.
  * If already an ID, returns it. If text, searches HAFAS.
+ * @param {string} stationInput
+ * @returns {Promise<Object>} { id, name }
  */
 async function resolveStation(stationInput) {
   if (!stationInput) return null;
@@ -90,7 +89,76 @@ async function resolveStation(stationInput) {
 }
 
 /**
+ * Transform a raw HAFAS leg into an enriched leg object.
+ * @param {Object} leg
+ * @returns {Object} Enriched leg
+ */
+function enrichLeg(leg) {
+  const legCarrier = identifyLegCarrier(leg);
+  const legPlannedDep = leg.plannedDeparture || leg.departure;
+  const legActualDep = leg.departure || legPlannedDep;
+  const legPlannedArr = leg.plannedArrival || leg.arrival;
+  const legActualArr = leg.arrival || legPlannedArr;
+  const legDurationMin = Math.round((new Date(legActualArr) - new Date(legActualDep)) / 60000);
+
+  // Intermediate stops
+  const stopovers = (leg.stopovers || []).map(s => ({
+    name: s.stop?.name || 'Unbekannter Halt',
+    arrival: s.arrival,
+    plannedArrival: s.plannedArrival,
+    departure: s.departure,
+    plannedDeparture: s.plannedDeparture,
+    platform: s.platform || s.plannedPlatform || null
+  }));
+
+  // Remarks & hints
+  const remarks = (leg.remarks || []).map(r => ({
+    text: r.text || r.summary || '',
+    type: r.type || 'hint',
+    code: r.code || ''
+  })).filter(r => r.text);
+
+  return {
+    walking: !!leg.walking,
+    carrier: legCarrier,
+    line: leg.line ? {
+      name: leg.line.name || '',
+      product: leg.line.product || '',
+      productName: leg.line.productName || leg.line.product || '',
+      direction: leg.direction || '',
+      adminCode: leg.line.adminCode || ''
+    } : null,
+    origin: {
+      name: leg.origin?.name || '',
+      id: leg.origin?.id || '',
+      platform: leg.plannedPlatform || leg.platform || null
+    },
+    destination: {
+      name: leg.destination?.name || '',
+      id: leg.destination?.id || '',
+      platform: leg.plannedArrivalPlatform || leg.arrivalPlatform || null
+    },
+    departure: legActualDep,
+    plannedDeparture: legPlannedDep,
+    arrival: legActualArr,
+    plannedArrival: legPlannedArr,
+    durationMinutes: legDurationMin,
+    durationFormatted: formatDuration(legDurationMin),
+    departureDelay: formatDelay(leg.departureDelay),
+    arrivalDelay: formatDelay(leg.arrivalDelay),
+    cancelled: !!leg.cancelled,
+    stopovers,
+    remarks
+  };
+}
+
+/**
  * Transform a raw HAFAS journey into a clean, structured object.
+ * @param {Object} j - Raw journey
+ * @param {number} idx - Index
+ * @param {Object} originStation
+ * @param {Object} destinationStation
+ * @returns {Object|null} Formatted journey
  */
 function formatJourney(j, idx, originStation, destinationStation) {
   const legs = j.legs || [];
@@ -113,68 +181,11 @@ function formatJourney(j, idx, originStation, destinationStation) {
   const transfers = Math.max(0, transitLegs.length - 1);
   const isDirect = transfers === 0;
 
-  // Carrier summary
+  // Carrier summary across all legs
   const carrierSummary = summarizeJourneyCarriers(legs);
 
-  // Detailed leg data
-  const enrichedLegs = legs.map((leg) => {
-    const legCarrier = identifyLegCarrier(leg);
-    const legPlannedDep = leg.plannedDeparture || leg.departure;
-    const legActualDep = leg.departure || legPlannedDep;
-    const legPlannedArr = leg.plannedArrival || leg.arrival;
-    const legActualArr = leg.arrival || legPlannedArr;
-    const legDurationMin = Math.round((new Date(legActualArr) - new Date(legActualDep)) / 60000);
-
-    // Stopovers / intermediate stops
-    const stopovers = (leg.stopovers || []).map(s => ({
-      name: s.stop?.name || 'Unbekannter Halt',
-      arrival: s.arrival,
-      plannedArrival: s.plannedArrival,
-      departure: s.departure,
-      plannedDeparture: s.plannedDeparture,
-      platform: s.platform || s.plannedPlatform || null
-    }));
-
-    // Remarks / alerts
-    const remarks = (leg.remarks || []).map(r => ({
-      text: r.text || r.summary || '',
-      type: r.type || 'hint',
-      code: r.code || ''
-    })).filter(r => r.text);
-
-    return {
-      walking: !!leg.walking,
-      carrier: legCarrier,
-      line: leg.line ? {
-        name: leg.line.name || '',
-        product: leg.line.product || '',
-        productName: leg.line.productName || leg.line.product || '',
-        direction: leg.direction || '',
-        adminCode: leg.line.adminCode || ''
-      } : null,
-      origin: {
-        name: leg.origin?.name || '',
-        id: leg.origin?.id || '',
-        platform: leg.plannedPlatform || leg.platform || null
-      },
-      destination: {
-        name: leg.destination?.name || '',
-        id: leg.destination?.id || '',
-        platform: leg.plannedArrivalPlatform || leg.arrivalPlatform || null
-      },
-      departure: legActualDep,
-      plannedDeparture: legPlannedDep,
-      arrival: legActualArr,
-      plannedArrival: legPlannedArr,
-      durationMinutes: legDurationMin,
-      durationFormatted: formatDuration(legDurationMin),
-      departureDelay: formatDelay(leg.departureDelay),
-      arrivalDelay: formatDelay(leg.arrivalDelay),
-      cancelled: !!leg.cancelled,
-      stopovers,
-      remarks
-    };
-  });
+  // Detailed enriched legs
+  const enrichedLegs = legs.map(enrichLeg);
 
   return {
     id: j.refreshToken || `journey-${idx}-${actualDep.getTime()}`,
@@ -199,37 +210,171 @@ function formatJourney(j, idx, originStation, destinationStation) {
 }
 
 /**
+ * Fetch journeys across a requested time window or via pagination tokens.
+ * @param {Object} originStation
+ * @param {Object} destinationStation
+ * @param {Date} startTime
+ * @param {Date} endTime
+ * @param {string|null} earlierRef
+ * @param {string|null} laterRef
+ * @returns {Promise<Object>} { rawJourneys, earlierRef, laterRef }
+ */
+async function fetchTimeWindowJourneys(originStation, destinationStation, startTime, endTime, earlierRef, laterRef) {
+  const rawJourneys = [];
+  let paginationEarlierRef = null;
+  let paginationLaterRef = null;
+
+  if (earlierRef || laterRef) {
+    // Single-batch pagination request
+    const queryOptions = {
+      results: 10,
+      stopovers: true,
+      remarks: true,
+      tickets: false
+    };
+    if (earlierRef) queryOptions.earlierThan = earlierRef;
+    if (laterRef) queryOptions.laterThan = laterRef;
+
+    const res = await hafas.journeys(originStation.id, destinationStation.id, queryOptions);
+    if (res.journeys) rawJourneys.push(...res.journeys);
+    paginationEarlierRef = res.earlierRef || null;
+    paginationLaterRef = res.laterRef || null;
+  } else {
+    // Multi-batch search covering up to the requested time window
+    let currentLaterRef = null;
+    let iterations = 0;
+    const MAX_ITERATIONS = 6;
+
+    while (iterations < MAX_ITERATIONS) {
+      iterations++;
+      const queryOptions = {
+        results: 10,
+        stopovers: true,
+        remarks: true,
+        tickets: false
+      };
+
+      if (currentLaterRef) {
+        queryOptions.laterThan = currentLaterRef;
+      } else {
+        queryOptions.departure = startTime;
+      }
+
+      const res = await hafas.journeys(originStation.id, destinationStation.id, queryOptions);
+      if (!paginationEarlierRef && res.earlierRef) {
+        paginationEarlierRef = res.earlierRef;
+      }
+
+      const batch = res.journeys || [];
+      if (batch.length === 0) break;
+
+      rawJourneys.push(...batch);
+      paginationLaterRef = res.laterRef || null;
+
+      const lastLeg = batch[batch.length - 1]?.legs?.[0];
+      const lastDep = lastLeg ? new Date(lastLeg.departure) : null;
+
+      // Stop once we have reached or passed the end of the time window
+      if (!res.laterRef || (lastDep && lastDep >= endTime)) {
+        break;
+      }
+      currentLaterRef = res.laterRef;
+    }
+  }
+
+  return {
+    rawJourneys,
+    earlierRef: paginationEarlierRef,
+    laterRef: paginationLaterRef
+  };
+}
+
+/**
+ * Deduplicate, sort, and filter journeys according to search criteria.
+ * @param {Array} rawJourneys
+ * @param {Object} options
+ * @returns {Array} Clean formatted journeys
+ */
+function processAndFilterJourneys(rawJourneys, {
+  originStation,
+  destinationStation,
+  startTime,
+  endTime,
+  earlierRef,
+  laterRef,
+  directOnly,
+  carrierFilter
+}) {
+  const seenKeys = new Set();
+  const formattedJourneys = [];
+
+  for (let i = 0; i < rawJourneys.length; i++) {
+    const formatted = formatJourney(rawJourneys[i], i, originStation, destinationStation);
+    if (!formatted) continue;
+
+    // Unique key: departure timestamp + first leg line name
+    const firstLegLine = formatted.legs[0]?.line?.name || 'train';
+    const key = `${formatted.depTimestamp}-${firstLegLine}`;
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+
+    // Strict filter: only trains >= requested startTime (unless paginating backwards)
+    if (!earlierRef && formatted.depTimestamp < startTime.getTime()) {
+      continue;
+    }
+
+    // Window limit (unless paginating forwards)
+    if (!laterRef && formatted.depTimestamp > endTime.getTime()) {
+      continue;
+    }
+
+    formattedJourneys.push(formatted);
+  }
+
+  // Sort strictly chronologically
+  formattedJourneys.sort((a, b) => a.depTimestamp - b.depTimestamp);
+
+  // Direct trains filter
+  let result = directOnly ? formattedJourneys.filter(j => j.isDirect) : formattedJourneys;
+
+  // Carrier filter
+  if (carrierFilter === 'westbahn') {
+    result = result.filter(j => j.carrierSummary.hasWestbahn);
+  } else if (carrierFilter === 'oebb') {
+    result = result.filter(j => j.carrierSummary.hasOebb);
+  }
+
+  return result;
+}
+
+/**
  * Netlify Function Handler for timetable queries.
  */
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers: HEADERS, body: '' };
+    return handleCorsPreflight('GET, POST, OPTIONS');
   }
 
   const params = event.queryStringParameters || {};
   const originInput = params.origin || params.from;
   const destinationInput = params.destination || params.to;
-  const dateParam = params.date; // YYYY-MM-DD
-  const timeParam = params.time; // HH:mm
+  const dateParam = params.date;
+  const timeParam = params.time;
   const directOnly = params.direct === 'true' || params.direct === '1';
-  const carrierFilter = (params.carrier || 'all').toLowerCase(); // 'all', 'oebb', 'westbahn'
+  const carrierFilter = (params.carrier || 'all').toLowerCase();
   const earlierRef = params.earlierRef || null;
   const laterRef = params.laterRef || null;
   const windowHours = Math.min(Math.max(parseInt(params.hours || '12', 10), 1), 24);
 
   if (!originInput || !destinationInput) {
-    return {
-      statusCode: 400,
-      headers: HEADERS,
-      body: JSON.stringify({
-        success: false,
-        error: 'Bitte Start- und Zielbahnhof angeben (Parameter "origin" und "destination").'
-      })
-    };
+    return jsonResponse(400, {
+      success: false,
+      error: 'Bitte Start- und Zielbahnhof angeben (Parameter "origin" und "destination").'
+    });
   }
 
   try {
-    // 1. Resolve origin and destination
+    // 1. Resolve stations
     const [originStation, destinationStation] = await Promise.all([
       resolveStation(originInput),
       resolveStation(destinationInput)
@@ -240,142 +385,46 @@ exports.handler = async (event) => {
     const endTime = new Date(startTime.getTime() + windowHours * 60 * 60 * 1000);
 
     // 3. Query journeys from HAFAS
-    const rawJourneys = [];
-    let paginationEarlierRef = null;
-    let paginationLaterRef = null;
+    const { rawJourneys, earlierRef: paginationEarlierRef, laterRef: paginationLaterRef } =
+      await fetchTimeWindowJourneys(originStation, destinationStation, startTime, endTime, earlierRef, laterRef);
 
-    if (earlierRef || laterRef) {
-      // Single-batch pagination request
-      const queryOptions = {
-        results: 10,
-        stopovers: true,
-        remarks: true,
-        tickets: false
-      };
-      if (earlierRef) queryOptions.earlierThan = earlierRef;
-      if (laterRef) queryOptions.laterThan = laterRef;
+    // 4. Transform, deduplicate and filter
+    const journeys = processAndFilterJourneys(rawJourneys, {
+      originStation,
+      destinationStation,
+      startTime,
+      endTime,
+      earlierRef,
+      laterRef,
+      directOnly,
+      carrierFilter
+    });
 
-      const res = await hafas.journeys(originStation.id, destinationStation.id, queryOptions);
-      if (res.journeys) rawJourneys.push(...res.journeys);
-      paginationEarlierRef = res.earlierRef || null;
-      paginationLaterRef = res.laterRef = res.laterRef || null;
-    } else {
-      // 12-hour window search: iterate until endTime is reached or max 6 iterations
-      let currentLaterRef = null;
-      let iterations = 0;
-      const MAX_ITERATIONS = 6;
-
-      while (iterations < MAX_ITERATIONS) {
-        iterations++;
-        const queryOptions = {
-          results: 10,
-          stopovers: true,
-          remarks: true,
-          tickets: false
-        };
-
-        if (currentLaterRef) {
-          queryOptions.laterThan = currentLaterRef;
-        } else {
-          queryOptions.departure = startTime;
-        }
-
-        const res = await hafas.journeys(originStation.id, destinationStation.id, queryOptions);
-        if (!paginationEarlierRef && res.earlierRef) {
-          paginationEarlierRef = res.earlierRef;
-        }
-
-        const batch = res.journeys || [];
-        if (batch.length === 0) break;
-
-        rawJourneys.push(...batch);
-        paginationLaterRef = res.laterRef || null;
-
-        const lastLeg = batch[batch.length - 1]?.legs?.[0];
-        const lastDep = lastLeg ? new Date(lastLeg.departure) : null;
-
-        // If the latest departure has reached or passed endTime, or no further ref, stop
-        if (!res.laterRef || (lastDep && lastDep >= endTime)) {
-          break;
-        }
-        currentLaterRef = res.laterRef;
-      }
-    }
-
-    // 4. Transform, deduplicate and strictly filter
-    const seenKeys = new Set();
-    let formattedJourneys = [];
-
-    for (let i = 0; i < rawJourneys.length; i++) {
-      const formatted = formatJourney(rawJourneys[i], i, originStation, destinationStation);
-      if (!formatted) continue;
-
-      // Unique key: departure timestamp + first leg line name
-      const firstLegLine = formatted.legs[0]?.line?.name || 'train';
-      const key = `${formatted.depTimestamp}-${firstLegLine}`;
-      if (seenKeys.has(key)) continue;
-      seenKeys.add(key);
-
-      // Strict filter: only trains >= requested startTime (unless paginating backwards)
-      if (!earlierRef && formatted.depTimestamp < startTime.getTime()) {
-        continue;
-      }
-
-      // 12-hour window limit (unless paginating forwards)
-      if (!laterRef && formatted.depTimestamp > endTime.getTime()) {
-        continue;
-      }
-
-      formattedJourneys.push(formatted);
-    }
-
-    // Sort strictly chronologically by departure time
-    formattedJourneys.sort((a, b) => a.depTimestamp - b.depTimestamp);
-
-    // 5. Apply filters
-    if (directOnly) {
-      formattedJourneys = formattedJourneys.filter(j => j.isDirect);
-    }
-
-    if (carrierFilter === 'westbahn') {
-      formattedJourneys = formattedJourneys.filter(j => j.carrierSummary.hasWestbahn);
-    } else if (carrierFilter === 'oebb') {
-      formattedJourneys = formattedJourneys.filter(j => j.carrierSummary.hasOebb);
-    }
-
-    return {
-      statusCode: 200,
-      headers: HEADERS,
-      body: JSON.stringify({
-        success: true,
-        query: {
-          origin: originStation,
-          destination: destinationStation,
-          date: dateParam || new Date().toISOString().slice(0, 10),
-          time: timeParam || new Date().toTimeString().slice(0, 5),
-          startISO: startTime.toISOString(),
-          endISO: endTime.toISOString(),
-          windowHours,
-          carrierFilter,
-          directOnly
-        },
-        pagination: {
-          earlierRef: paginationEarlierRef,
-          laterRef: paginationLaterRef
-        },
-        count: formattedJourneys.length,
-        journeys: formattedJourneys
-      })
-    };
+    return jsonResponse(200, {
+      success: true,
+      query: {
+        origin: originStation,
+        destination: destinationStation,
+        date: dateParam || new Date().toISOString().slice(0, 10),
+        time: timeParam || new Date().toTimeString().slice(0, 5),
+        startISO: startTime.toISOString(),
+        endISO: endTime.toISOString(),
+        windowHours,
+        carrierFilter,
+        directOnly
+      },
+      pagination: {
+        earlierRef: paginationEarlierRef,
+        laterRef: paginationLaterRef
+      },
+      count: journeys.length,
+      journeys
+    });
   } catch (err) {
     console.error('Fahrplan query error:', err);
-    return {
-      statusCode: 500,
-      headers: HEADERS,
-      body: JSON.stringify({
-        success: false,
-        error: err.message || 'Fehler beim Abrufen des Fahrplans. Bitte überprüfe die Bahnhöfe oder versuche es erneut.'
-      })
-    };
+    return jsonResponse(500, {
+      success: false,
+      error: err.message || 'Fehler beim Abrufen des Fahrplans. Bitte überprüfe die Bahnhöfe oder versuche es erneut.'
+    });
   }
 };

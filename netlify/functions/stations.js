@@ -1,5 +1,6 @@
 const { createClient } = require('hafas-client');
 const { profile: oebbProfile } = require('hafas-client/p/oebb/index.js');
+const { handleCorsPreflight, jsonResponse } = require('./utils/httpHelper');
 
 const hafas = createClient(oebbProfile, 'oebb-westbahn-fahrplan-stations-v1');
 
@@ -21,40 +22,53 @@ const PRESET_STATIONS = [
   { id: '8100085', name: 'Klagenfurt Hbf', shortName: 'Klagenfurt Hbf', code: 'KLG', tags: ['klagenfurt', 'kaernten'] }
 ];
 
-const HEADERS = {
-  'Content-Type': 'application/json; charset=utf-8',
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS'
-};
+/**
+ * Filter presets matching query substring in name, shortName or tags.
+ * @param {string} qLower - Lowercase search query
+ * @returns {Array} Matching preset stations
+ */
+function filterPresetStations(qLower) {
+  return PRESET_STATIONS.filter(s =>
+    s.name.toLowerCase().includes(qLower) ||
+    s.shortName.toLowerCase().includes(qLower) ||
+    s.tags.some(t => t.includes(qLower))
+  );
+}
 
+/**
+ * Clean raw HAFAS location name into short display format.
+ * @param {string} rawName
+ * @returns {string} Cleaned short name
+ */
+function cleanStationShortName(rawName = '') {
+  return rawName
+    .replace(/\s*\(U\)$/i, '')
+    .replace(/\s*Bahnhst$/i, '')
+    .trim();
+}
+
+/**
+ * Netlify Function handler for station lookup and autocomplete.
+ */
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers: HEADERS, body: '' };
+    return handleCorsPreflight('GET, OPTIONS');
   }
 
   const query = (event.queryStringParameters?.q || event.queryStringParameters?.query || '').trim();
 
   // If empty query, return popular preset stations
   if (!query) {
-    return {
-      statusCode: 200,
-      headers: HEADERS,
-      body: JSON.stringify({
-        success: true,
-        stations: PRESET_STATIONS
-      })
-    };
+    return jsonResponse(200, {
+      success: true,
+      stations: PRESET_STATIONS
+    });
   }
 
+  const qLower = query.toLowerCase();
+
   try {
-    // Check preset stations first
-    const qLower = query.toLowerCase();
-    const matchedPresets = PRESET_STATIONS.filter(s =>
-      s.name.toLowerCase().includes(qLower) ||
-      s.shortName.toLowerCase().includes(qLower) ||
-      s.tags.some(t => t.includes(qLower))
-    );
+    const matchedPresets = filterPresetStations(qLower);
 
     // Call ÖBB HAFAS locations API
     const rawLocations = await hafas.locations(query, {
@@ -67,7 +81,7 @@ exports.handler = async (event) => {
     const seenIds = new Set();
     const stations = [];
 
-    // Add matching presets first
+    // Prioritize matched preset hubs
     for (const p of matchedPresets) {
       seenIds.add(p.id);
       stations.push({
@@ -78,50 +92,38 @@ exports.handler = async (event) => {
       });
     }
 
-    // Add HAFAS locations
+    // Merge live HAFAS locations avoiding duplicates
     for (const loc of rawLocations) {
       if (!seenIds.has(loc.id)) {
         seenIds.add(loc.id);
         stations.push({
           id: loc.id,
           name: loc.name,
-          shortName: loc.name.replace(/\s*\(U\)$/i, '').replace(/\s*Bahnhst$/i, '').trim(),
+          shortName: cleanStationShortName(loc.name),
           isPopular: false,
           location: loc.location ? { lat: loc.location.latitude, lon: loc.location.longitude } : null
         });
       }
     }
 
-    return {
-      statusCode: 200,
-      headers: HEADERS,
-      body: JSON.stringify({
-        success: true,
-        query,
-        count: stations.length,
-        stations
-      })
-    };
+    return jsonResponse(200, {
+      success: true,
+      query,
+      count: stations.length,
+      stations
+    });
   } catch (err) {
     console.error('Error fetching stations:', err);
 
-    // Graceful fallback to presets filter on network error
-    const qLower = query.toLowerCase();
-    const fallbackStations = PRESET_STATIONS.filter(s =>
-      s.name.toLowerCase().includes(qLower) ||
-      s.shortName.toLowerCase().includes(qLower)
-    );
+    // Fallback to presets matching query
+    const fallbackStations = filterPresetStations(qLower);
 
-    return {
-      statusCode: 200,
-      headers: HEADERS,
-      body: JSON.stringify({
-        success: true,
-        query,
-        count: fallbackStations.length,
-        stations: fallbackStations,
-        warning: 'Fallback auf vordefinierte Bahnhöfe aktiv (HAFAS nicht erreichbar).'
-      })
-    };
+    return jsonResponse(200, {
+      success: true,
+      query,
+      count: fallbackStations.length,
+      stations: fallbackStations,
+      warning: 'Fallback auf vordefinierte Bahnhöfe aktiv (HAFAS nicht erreichbar).'
+    });
   }
 };

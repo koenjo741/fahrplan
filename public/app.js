@@ -1,26 +1,147 @@
 /**
- * FahrplanAT - Frontend Controller
- * Handles stations autocomplete, timetable queries, carrier badges, and dynamic rendering.
+ * Fahrpläne EU - Frontend Controller
+ * Modular, accessible client controller for European timetable queries and dynamic rendering.
  */
 
-// Application State
-const state = {
-  origin: { id: '8100003', name: 'Wien Westbahnhof' },
-  destination: { id: '8100002', name: 'Salzburg Hbf' },
+// ==========================================
+// 1. Safe Local Storage Manager
+// ==========================================
+const Storage = {
+  PREF_DIRECT_KEY: 'fahrplan_direct',
+  PREF_CARRIER_KEY: 'fahrplan_carrier',
+
+  getPreferences() {
+    try {
+      const savedDirect = localStorage.getItem(this.PREF_DIRECT_KEY);
+      const savedCarrier = localStorage.getItem(this.PREF_CARRIER_KEY);
+      return {
+        direct: savedDirect !== null ? savedDirect === 'true' : false,
+        carrier: savedCarrier && ['all', 'westbahn', 'oebb'].includes(savedCarrier) ? savedCarrier : 'all'
+      };
+    } catch (err) {
+      console.warn('Storage read warning:', err);
+      return { direct: false, carrier: 'all' };
+    }
+  },
+
+  savePreferences({ direct, carrier }) {
+    try {
+      if (typeof direct === 'boolean') {
+        localStorage.setItem(this.PREF_DIRECT_KEY, direct ? 'true' : 'false');
+      }
+      if (carrier) {
+        localStorage.setItem(this.PREF_CARRIER_KEY, carrier);
+      }
+    } catch (err) {
+      console.warn('Storage save warning:', err);
+    }
+  }
+};
+
+// ==========================================
+// 2. Pure Formatting Utilities
+// ==========================================
+const Formatters = {
+  /**
+   * Escape HTML special characters.
+   */
+  escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  },
+
+  /**
+   * Format ISO string to 24-hour time HH:mm.
+   */
+  formatTimeOnly(isoString) {
+    if (!isoString) return '--:--';
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return '--:--';
+    return d.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', hour12: false });
+  },
+
+  /**
+   * Format date into localized human-readable label.
+   */
+  formatDateLabel(dateString) {
+    if (!dateString) return 'Heute';
+    const d = new Date(`${dateString}T12:00:00`);
+    if (isNaN(d.getTime())) return dateString;
+
+    const today = new Date();
+    if (
+      d.getDate() === today.getDate() &&
+      d.getMonth() === today.getMonth() &&
+      d.getFullYear() === today.getFullYear()
+    ) {
+      return 'Heute, ' + d.toLocaleDateString('de-AT', { day: 'numeric', month: 'short' });
+    }
+
+    return d.toLocaleDateString('de-AT', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  },
+
+  /**
+   * Format duration in minutes to concise short format (e.g. "1h 15m").
+   */
+  formatDurationShort(minutes) {
+    if (isNaN(minutes) || minutes < 0) return '--';
+    const h = Math.floor(minutes / 60);
+    const m = Math.round(minutes % 60);
+    if (h === 0) return `${m}m`;
+    if (m === 0) return `${h}h`;
+    return `${h}h ${m}m`;
+  },
+
+  /**
+   * Shorten Austrian station names for clean, responsive displays.
+   */
+  shortenStation(name) {
+    if (!name) return '';
+    return name
+      .replace(/\s*\(Bahnsteige[^)]*\)/gi, '')
+      .replace(/\s*\(U\)/gi, '')
+      .replace(/\s*Bahnhst/gi, '')
+      .replace(/Linz\/Donau/gi, 'Linz')
+      .replace(/Wien Westbahnhof/gi, 'Wien West')
+      .replace(/Wien Hauptbahnhof/gi, 'Wien Hbf')
+      .replace(/Flughafen Wien Bahnhof/gi, 'Flughafen Wien')
+      .trim();
+  },
+
+  /**
+   * Extract clean line/train name without internal noise.
+   */
+  extractCleanLine(name) {
+    if (!name) return '';
+    return name.replace(/\s*\(Zug-Nr\.[^)]*\)/i, '').trim();
+  }
+};
+
+// ==========================================
+// 3. Central Application State
+// ==========================================
+const AppState = {
+  origin: { id: '', name: '' },
+  destination: { id: '', name: '' },
   date: '',
   time: '',
   carrier: 'all',
   direct: false,
   journeys: [],
   pagination: { earlierRef: null, laterRef: null },
-  isLoading: false
+  isLoading: false,
+  abortController: null
 };
 
-// Global AbortController for cancelling searches
-let currentAbortController = null;
-
-// DOM Elements
-const elements = {
+// ==========================================
+// 4. Cached DOM References
+// ==========================================
+const DOM = {
   form: document.getElementById('fahrplanForm'),
   originInput: document.getElementById('originInput'),
   originId: document.getElementById('originId'),
@@ -56,930 +177,841 @@ const elements = {
   loadEarlierBtn: document.getElementById('loadEarlierBtn'),
   laterControls: document.getElementById('laterControls'),
   loadLaterBtn: document.getElementById('loadLaterBtn'),
-  quickStationChips: document.getElementById('quickStationChips')
+  quickStationChips: document.getElementById('quickStationChips'),
+  liveClock: document.getElementById('liveClock')
 };
 
-// Initialize App
-document.addEventListener('DOMContentLoaded', () => {
-  initDefaults();
-  setupEventListeners();
-  setupAutocomplete(elements.originInput, elements.originId, elements.originDropdown, elements.clearOriginBtn);
-  setupAutocomplete(elements.destinationInput, elements.destinationId, elements.destinationDropdown, elements.clearDestinationBtn);
-  
-  // Render Lucide icons
-  if (window.lucide) {
-    lucide.createIcons();
+// ==========================================
+// 5. Header Live Clock Component
+// ==========================================
+const LiveClock = {
+  intervalId: null,
+
+  update() {
+    if (!DOM.liveClock) return;
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = now.getFullYear();
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    DOM.liveClock.textContent = `${day}.${month}.${year}, ${hours}:${minutes}`;
+  },
+
+  start() {
+    this.update();
+    if (this.intervalId) clearInterval(this.intervalId);
+    this.intervalId = setInterval(() => this.update(), 1000);
   }
+};
 
-  // Trigger initial search for default route (Wien Westbahnhof -> Salzburg Hbf)
-  performSearch();
-});
+// ==========================================
+// 6. Station Autocomplete Component
+// ==========================================
+const Autocomplete = {
+  setup(inputEl, idEl, dropdownEl, clearBtn) {
+    let debounceTimer = null;
 
-/**
- * Initialize default date and time to current Austrian local time.
- */
-function initDefaults() {
-  const now = new Date();
-  
-  // Format Date: YYYY-MM-DD
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  state.date = `${year}-${month}-${day}`;
-  elements.dateInput.value = state.date;
+    // Clear input
+    clearBtn.addEventListener('click', () => {
+      inputEl.value = '';
+      idEl.value = '';
+      clearBtn.classList.add('hidden');
+      dropdownEl.classList.add('hidden');
+      inputEl.focus();
+    });
 
-  // Format Time: HH:mm
-  const hours = String(now.getHours()).padStart(2, '0');
-  const minutes = String(now.getMinutes()).padStart(2, '0');
-  state.time = `${hours}:${minutes}`;
-  elements.timeInput.value = state.time;
+    // Input changes
+    inputEl.addEventListener('input', () => {
+      const query = inputEl.value.trim();
+      if (query) {
+        clearBtn.classList.remove('hidden');
+      } else {
+        clearBtn.classList.add('hidden');
+        idEl.value = '';
+      }
 
-  // Set default stations in inputs
-  elements.originInput.value = state.origin.name;
-  elements.originId.value = state.origin.id;
-  elements.clearOriginBtn.classList.remove('hidden');
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        this.fetchAndRender(query, dropdownEl, inputEl, idEl, clearBtn);
+      }, 200);
+    });
 
-  elements.destinationInput.value = state.destination.name;
-  elements.destinationId.value = state.destination.id;
-  elements.clearDestinationBtn.classList.remove('hidden');
+    // Focus on empty input triggers preset stations
+    inputEl.addEventListener('focus', () => {
+      if (!inputEl.value.trim()) {
+        this.fetchAndRender('', dropdownEl, inputEl, idEl, clearBtn);
+      }
+    });
 
-  // 1. Restore persisted preferences from localStorage
-  try {
-    const savedDirect = localStorage.getItem('fahrplan_direct');
-    if (savedDirect !== null) {
-      state.direct = (savedDirect === 'true');
-      elements.directCheckbox.checked = state.direct;
+    // Close on click outside
+    document.addEventListener('click', (e) => {
+      if (!inputEl.contains(e.target) && !dropdownEl.contains(e.target)) {
+        dropdownEl.classList.add('hidden');
+      }
+    });
+  },
+
+  async fetchAndRender(query, dropdownEl, inputEl, idEl, clearBtn) {
+    try {
+      const url = `/api/stations?q=${encodeURIComponent(query)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const data = await res.json();
+
+      if (data.success && data.stations && data.stations.length > 0) {
+        this.renderDropdown(data.stations, dropdownEl, inputEl, idEl, clearBtn);
+        dropdownEl.classList.remove('hidden');
+      } else {
+        dropdownEl.innerHTML = '<li class="text-xs text-slate-500 py-2 text-center">Kein Bahnhof gefunden</li>';
+        dropdownEl.classList.remove('hidden');
+      }
+    } catch (err) {
+      console.warn('Stations lookup failed:', err);
+      dropdownEl.classList.add('hidden');
+    }
+  },
+
+  renderDropdown(stations, dropdownEl, inputEl, idEl, clearBtn) {
+    dropdownEl.innerHTML = '';
+    stations.forEach((st) => {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <div class="flex items-center space-x-2">
+          <i data-lucide="${st.isPopular ? 'star' : 'map-pin'}" class="w-3.5 h-3.5 ${st.isPopular ? 'text-amber-400' : 'text-slate-400'}"></i>
+          <span class="font-medium">${Formatters.escapeHtml(st.name)}</span>
+        </div>
+        <span class="text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded font-mono">${st.shortName || ''}</span>
+      `;
+
+      li.addEventListener('click', () => {
+        inputEl.value = st.name;
+        idEl.value = st.id;
+        clearBtn.classList.remove('hidden');
+        dropdownEl.classList.add('hidden');
+        if (window.lucide) lucide.createIcons();
+      });
+
+      dropdownEl.appendChild(li);
+    });
+
+    if (window.lucide) lucide.createIcons();
+  }
+};
+
+// ==========================================
+// 7. Journey Card & Timeline Renderer
+// ==========================================
+const CardRenderer = {
+  createCard(journey, index) {
+    const card = document.createElement('div');
+    const carrierKey = journey.carrierSummary?.primary || 'other';
+    card.className = `journey-card stripe-${carrierKey} rounded-xl overflow-hidden animate-slide-in`;
+    card.style.animationDelay = `${index * 30}ms`;
+
+    const depTime = Formatters.formatTimeOnly(journey.departureTime);
+    const arrTime = Formatters.formatTimeOnly(journey.arrivalTime);
+    const originShort = Formatters.shortenStation(journey.originName);
+    const destShort = Formatters.shortenStation(journey.destinationName);
+    const depPlat = journey.departurePlatform ? `Gl. ${journey.departurePlatform}` : '';
+    const arrPlat = journey.arrivalPlatform ? `Gl. ${journey.arrivalPlatform}` : '';
+    const mobilePill = this.getMobileCarrierPill(journey);
+
+    // Desktop Carrier Badge HTML
+    const primaryKey = journey.carrierSummary?.primary || 'other';
+    const carrierName = journey.carrierSummary?.label || 'Verbindung';
+    const badgeClass = journey.carrierSummary?.badgeClass || 'badge-local';
+    const iconName = primaryKey === 'kombi' ? 'git-merge' : 'train';
+
+    const carrierBadgeHtml = `
+      <span class="inline-flex items-center px-3 py-1 rounded-full ${badgeClass} text-xs font-bold tracking-wide">
+        <i data-lucide="${iconName}" class="w-3.5 h-3.5 mr-1.5"></i> ${Formatters.escapeHtml(carrierName)}
+      </span>`;
+
+    // Delay indicator
+    const depDelayHtml = journey.departureDelay?.isDelayed
+      ? `<span class="ml-2 text-xs font-bold text-rose-400 bg-rose-950/80 px-2 py-0.5 rounded border border-rose-800">${journey.departureDelay.text}</span>`
+      : `<span class="ml-2 text-xs font-semibold text-emerald-400">Pünktlich</span>`;
+
+    // Train Products Labels
+    const trainNames = journey.legs
+      .filter(l => l.line)
+      .map(l => `<span class="inline-flex items-center justify-center w-44 h-7 whitespace-nowrap bg-slate-800 text-slate-200 border border-slate-700/80 px-2.5 rounded-lg text-xs font-mono font-bold mr-2 text-center flex-shrink-0">${Formatters.escapeHtml(l.line.name)}</span>`)
+      .join('');
+
+    // Transfer summary
+    let transferSummaryText = '';
+    if (!journey.isDirect && journey.legs && journey.legs.length > 1) {
+      const transferStops = [];
+      for (let i = 0; i < journey.legs.length - 1; i++) {
+        const leg = journey.legs[i];
+        if (leg.destination?.name && !leg.walking) {
+          transferStops.push(Formatters.shortenStation(leg.destination.name));
+        }
+      }
+      const distinctStops = [...new Set(transferStops)];
+      if (distinctStops.length > 0) {
+        transferSummaryText = ` in ${distinctStops.join(', ')}`;
+      }
     }
 
-    const savedCarrier = localStorage.getItem('fahrplan_carrier');
-    if (savedCarrier !== null && ['all', 'westbahn'].includes(savedCarrier)) {
-      state.carrier = savedCarrier;
-      elements.carrierSelect.value = state.carrier;
+    const transferLabel = journey.isDirect
+      ? `<span class="text-emerald-400 font-semibold flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1"></i> Direktverbindung</span>`
+      : `<span class="text-amber-400 font-semibold flex items-center"><i data-lucide="git-branch" class="w-3.5 h-3.5 mr-1"></i> ${journey.transfers} ${journey.transfers === 1 ? 'Umstieg' : 'Umstiege'}${Formatters.escapeHtml(transferSummaryText)}</span>`;
+
+    card.innerHTML = `
+      <!-- 📱 MOBILE ULTRA-COMPACT VIEW -->
+      <div class="sm:hidden block px-3 py-2 cursor-pointer mobile-card-trigger hover:bg-slate-800/40 transition-colors select-none">
+        <div class="grid grid-cols-[auto,1fr,auto] items-center gap-2">
+          <!-- Left: Times & Delay -->
+          <div class="flex items-baseline space-x-1.5">
+            <span class="font-display font-medium text-[15px] text-white tracking-tight">${depTime}</span>
+            <span class="text-slate-500 text-xs">→</span>
+            <span class="font-display font-medium text-[15px] text-white tracking-tight">${arrTime}</span>
+            ${journey.departureDelay?.isDelayed 
+              ? `<span class="text-[10px] font-bold text-rose-400 bg-rose-950 px-1 py-0.2 rounded border border-rose-800">${journey.departureDelay.text}</span>` 
+              : `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" title="Pünktlich"></span>`
+            }
+          </div>
+
+          <!-- Center: Fahrtdauer -->
+          <div class="text-center">
+            <span class="inline-block text-[11px] font-bold text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded-md tracking-tight">${Formatters.formatDurationShort(journey.durationMinutes)}</span>
+          </div>
+
+          <!-- Right: Carrier Badge Pill -->
+          <div class="flex items-center justify-end">
+            ${mobilePill}
+          </div>
+        </div>
+
+        <!-- Line 2: Stations & Transfers -->
+        <div class="flex items-center justify-between text-[11px] text-slate-400 mt-0.5 leading-tight gap-2">
+          <div class="truncate flex-1 min-w-0 pr-2 text-slate-300">
+            <span>${Formatters.escapeHtml(originShort)}</span>${depPlat ? ` <span class="text-slate-500 text-[10px]">(${depPlat})</span>` : ''}
+            <span class="text-slate-600">→</span>
+            <span>${Formatters.escapeHtml(destShort)}</span>${arrPlat ? ` <span class="text-slate-500 text-[10px]">(${arrPlat})</span>` : ''}
+          </div>
+          <div class="flex items-center space-x-1 flex-shrink-0 text-[10px]">
+            <span class="${journey.isDirect ? 'text-emerald-400 font-semibold' : 'text-amber-400 font-medium'}">
+              ${journey.isDirect ? 'Direkt' : `${journey.transfers} Umst.${transferSummaryText ? ` (${Formatters.escapeHtml(transferSummaryText.trim().replace(/^in\s*/, ''))})` : ''}`}
+            </span>
+            <i data-lucide="chevron-down" class="mobile-chevron w-3 h-3 text-slate-500 transition-transform duration-200"></i>
+          </div>
+        </div>
+      </div>
+
+      <!-- 💻 DESKTOP / TABLET SPACIOUS VIEW -->
+      <div class="hidden sm:block p-5 sm:p-6">
+        <!-- Top Row: Carrier Badge & Products -->
+        <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800/80">
+          <div class="flex items-center space-x-2">
+            ${carrierBadgeHtml}
+            <div class="flex flex-wrap items-center mt-1 sm:mt-0">${trainNames}</div>
+          </div>
+          <div class="text-xs text-slate-400">
+            ${transferLabel}
+          </div>
+        </div>
+
+        <!-- Middle Row: Times, Stations, Duration -->
+        <div class="grid grid-cols-1 sm:grid-cols-[1fr,auto,1fr] gap-4 items-center py-4">
+          <!-- Departure -->
+          <div class="space-y-1">
+            <div class="flex items-baseline space-x-2">
+              <span class="font-display text-2xl sm:text-3xl font-medium text-white tracking-tight">${depTime}</span>
+              ${depDelayHtml}
+            </div>
+            <div class="text-sm font-semibold text-slate-200 truncate" title="${Formatters.escapeHtml(journey.originName)}">
+              ${Formatters.escapeHtml(journey.originName)}
+            </div>
+            ${journey.departurePlatform ? `<div class="text-xs text-slate-400 font-medium"><i data-lucide="signpost" class="inline w-3 h-3 mr-1 text-slate-400"></i> Bahnsteig ${Formatters.escapeHtml(journey.departurePlatform)}</div>` : ''}
+          </div>
+
+          <!-- Duration Indicator & Details Toggle -->
+          <div class="flex flex-col items-center justify-center">
+            <button
+              type="button"
+              class="duration-toggle-btn group flex flex-col items-center justify-center px-3.5 py-1.5 rounded-xl hover:bg-slate-800/80 active:scale-95 border border-transparent hover:border-slate-700/80 transition-all cursor-pointer"
+              title="Klicken für Fahrtverlauf &amp; Details"
+            >
+              <div class="text-xs font-bold text-slate-300 group-hover:text-rose-400 tracking-wider flex items-center transition-colors">
+                <i data-lucide="clock" class="w-3.5 h-3.5 mr-1 text-slate-400 group-hover:text-rose-400 transition-colors"></i>
+                <span>${journey.durationFormatted}</span>
+                <i data-lucide="chevron-down" class="duration-chevron w-3.5 h-3.5 ml-1 text-slate-500 group-hover:text-rose-400 transition-transform duration-200"></i>
+              </div>
+              <div class="w-20 sm:w-28 h-0.5 bg-gradient-to-r from-rose-500 via-amber-400 to-sky-400 my-1.5 relative">
+                <div class="w-2 h-2 rounded-full bg-slate-900 border-2 border-rose-500 absolute -top-0.5 left-0"></div>
+                <div class="w-2 h-2 rounded-full bg-slate-900 border-2 border-sky-400 absolute -top-0.5 right-0"></div>
+              </div>
+              <div class="text-[11px] text-slate-400 group-hover:text-slate-300 transition-colors font-medium flex items-center space-x-1">
+                <span>${journey.isDirect ? 'Direkt' : `${journey.transfers} Umst.`}</span>
+                <span class="text-slate-600">•</span>
+                <span class="text-rose-400/90 font-medium group-hover:underline">Details</span>
+              </div>
+            </button>
+          </div>
+
+          <!-- Arrival -->
+          <div class="space-y-1 sm:text-right">
+            <div class="flex items-baseline space-x-2 sm:justify-end">
+              <span class="font-display text-2xl sm:text-3xl font-medium text-white tracking-tight">${arrTime}</span>
+            </div>
+            <div class="text-sm font-semibold text-slate-200 truncate" title="${Formatters.escapeHtml(journey.destinationName)}">
+              ${Formatters.escapeHtml(journey.destinationName)}
+            </div>
+            ${journey.arrivalPlatform ? `<div class="text-xs text-slate-400 font-medium"><i data-lucide="signpost" class="inline w-3 h-3 mr-1 text-slate-400"></i> Bahnsteig ${Formatters.escapeHtml(journey.arrivalPlatform)}</div>` : ''}
+          </div>
+        </div>
+      </div>
+
+      <!-- Collapsible Legs Details Timeline -->
+      <div class="legs-details-panel hidden px-3 pb-3 sm:px-6 sm:pb-5 pt-2 sm:pt-4 border-t border-slate-800/80 space-y-3">
+        ${this.renderLegsTimeline(journey.legs)}
+      </div>
+    `;
+
+    // Interactive accordion toggling
+    const mobileTrigger = card.querySelector('.mobile-card-trigger');
+    const desktopDurationBtn = card.querySelector('.duration-toggle-btn');
+    const detailsPanel = card.querySelector('.legs-details-panel');
+    const desktopChevron = desktopDurationBtn?.querySelector('.duration-chevron');
+    const mobileChevron = mobileTrigger?.querySelector('.mobile-chevron');
+
+    const toggleDetails = () => {
+      const isHidden = detailsPanel.classList.contains('hidden');
+      if (isHidden) {
+        detailsPanel.classList.remove('hidden');
+        if (desktopChevron) desktopChevron.style.transform = 'rotate(180deg)';
+        if (mobileChevron) mobileChevron.style.transform = 'rotate(180deg)';
+      } else {
+        detailsPanel.classList.add('hidden');
+        if (desktopChevron) desktopChevron.style.transform = 'rotate(0deg)';
+        if (mobileChevron) mobileChevron.style.transform = 'rotate(0deg)';
+      }
+    };
+
+    if (mobileTrigger) mobileTrigger.addEventListener('click', toggleDetails);
+    if (desktopDurationBtn) desktopDurationBtn.addEventListener('click', toggleDetails);
+
+    // Intermediate stops toggling (clean delegation without inline onclick)
+    card.querySelectorAll('.stopovers-toggle-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const list = btn.nextElementSibling;
+        if (list) list.classList.toggle('hidden');
+      });
+    });
+
+    return card;
+  },
+
+  getMobileCarrierPill(journey) {
+    const primary = journey.carrierSummary?.primary || 'other';
+    const badgeClass = journey.carrierSummary?.badgeClass || 'badge-local';
+    const trainLegs = (journey.legs || []).filter(l => l.line);
+    const badgeClasses = 'w-[128px] inline-flex items-center justify-center text-center font-mono font-bold text-[10px] py-0.5 rounded tracking-tight flex-shrink-0 truncate';
+    
+    if (trainLegs.length === 0) {
+      return `<span class="${badgeClasses} badge-local">Verbindung</span>`;
+    }
+
+    if (trainLegs.length > 1) {
+      const l1 = Formatters.extractCleanLine(trainLegs[0]?.line?.name) || 'Zug';
+      const l2 = Formatters.extractCleanLine(trainLegs[1]?.line?.name) || 'Zug';
+      const multiLabel = `${l1} ➔ ${l2}`;
+      const pillClass = primary === 'kombi' ? 'badge-kombi' : badgeClass;
+      return `<span class="${badgeClasses} ${pillClass}" title="${Formatters.escapeHtml(multiLabel)}">${Formatters.escapeHtml(multiLabel)}</span>`;
+    }
+
+    const firstLineName = trainLegs[0]?.line?.name || '';
+    if (primary === 'westbahn') {
+      const cleanNum = firstLineName.replace(/^WB\s*/i, '');
+      return `<span class="${badgeClasses} badge-westbahn">WB ${Formatters.escapeHtml(cleanNum || 'Zug')}</span>`;
+    }
+    return `<span class="${badgeClasses} ${badgeClass}">${Formatters.escapeHtml(firstLineName || 'Zug')}</span>`;
+  },
+
+  renderLegsTimeline(legs) {
+    if (!legs || legs.length === 0) return '';
+    const htmlParts = [];
+
+    for (let i = 0; i < legs.length; i++) {
+      const leg = legs[i];
+
+      const isStationInternalWalk = leg.walking && (
+        !leg.origin?.name || 
+        leg.origin?.name === leg.destination?.name ||
+        (i > 0 && legs[i-1].destination?.name === leg.destination?.name)
+      );
+
+      if (isStationInternalWalk) continue;
+
+      // Transfer transition banner
+      if (i > 0) {
+        const prevLeg = legs[i - 1];
+        if (prevLeg && prevLeg.arrival && leg.departure) {
+          const waitMin = Math.round((new Date(leg.departure).getTime() - new Date(prevLeg.arrival).getTime()) / 60000);
+          const transferStationName = Formatters.shortenStation(leg.origin?.name || prevLeg.destination?.name || 'Bahnhof');
+          const prevPlat = prevLeg.arrivalPlatform || prevLeg.destination?.platform;
+          const nextPlat = leg.departurePlatform || leg.origin?.platform;
+          const platInfo = prevPlat && nextPlat ? `Gl. ${prevPlat} → Gl. ${nextPlat}` : (nextPlat ? `Ab Gl. ${nextPlat}` : '');
+
+          htmlParts.push(`
+            <div class="flex items-center justify-between px-3.5 py-2 my-2 bg-amber-950/40 border border-amber-600/50 rounded-xl text-xs text-amber-200">
+              <div class="flex items-center space-x-2">
+                <i data-lucide="git-branch" class="w-4 h-4 text-amber-400 flex-shrink-0"></i>
+                <div>
+                  <span class="font-bold">Umstieg in ${Formatters.escapeHtml(transferStationName)}</span>
+                  <span class="text-amber-300/80 font-normal ml-1.5">• ${waitMin >= 0 ? `${waitMin} Min. Übergangszeit` : 'Direkter Anschluss'}</span>
+                </div>
+              </div>
+              ${platInfo ? `<span class="text-[11px] font-mono text-amber-300 font-semibold bg-amber-900/60 px-2 py-0.5 rounded border border-amber-700/60">${Formatters.escapeHtml(platInfo)}</span>` : ''}
+            </div>
+          `);
+        }
+      }
+
+      if (leg.walking) {
+        htmlParts.push(`
+          <div class="flex items-start space-x-3 text-xs text-slate-400 py-1.5 pl-3 border-l-2 border-dashed border-slate-700 ml-4 my-1">
+            <i data-lucide="footprints" class="w-4 h-4 text-slate-500"></i>
+            <span>Fußweg (${leg.durationFormatted || 'ca. 5 Min.'}) zu ${Formatters.escapeHtml(leg.destination?.name || '')}</span>
+          </div>
+        `);
+        continue;
+      }
+
+      const legCarrier = leg.carrier || {};
+      const lineName = leg.line?.name || 'Zug';
+      const direction = leg.line?.direction ? `Richtung ${Formatters.escapeHtml(leg.line.direction)}` : '';
+      const depTime = Formatters.formatTimeOnly(leg.departure);
+      const arrTime = Formatters.formatTimeOnly(leg.arrival);
+      const hasStopovers = leg.stopovers && leg.stopovers.length > 0;
+      const stopoverCount = hasStopovers ? leg.stopovers.length : 0;
+
+      htmlParts.push(`
+        <div class="bg-slate-900/90 rounded-xl p-4 border border-slate-800 space-y-3">
+          <!-- Leg Header -->
+          <div class="flex items-center justify-between text-xs">
+            <div class="flex items-center space-x-2">
+              <span class="inline-flex items-center px-2 py-0.5 rounded font-bold ${legCarrier.badgeClass || 'badge-other'}">
+                ${Formatters.escapeHtml(legCarrier.name || 'Zug')}
+              </span>
+              <span class="font-mono font-bold text-slate-200 inline-block min-w-[6.5rem] text-center">${Formatters.escapeHtml(lineName)}</span>
+              <span class="text-slate-400 text-[11px]">${direction}</span>
+            </div>
+            <span class="text-slate-400 font-mono">${leg.durationFormatted}</span>
+          </div>
+
+          <!-- Departure Stop -->
+          <div class="flex items-start justify-between text-xs">
+            <div class="space-y-0.5">
+              <div class="flex items-center space-x-2">
+                <span class="font-bold text-slate-200 text-sm">${depTime}</span>
+                <span class="font-medium text-slate-300">${Formatters.escapeHtml(leg.origin?.name || '')}</span>
+              </div>
+              ${leg.origin?.platform ? `<div class="text-[11px] text-slate-400">Bahnsteig ${Formatters.escapeHtml(leg.origin.platform)}</div>` : ''}
+            </div>
+            ${leg.departureDelay?.isDelayed ? `<span class="text-rose-400 font-bold">${leg.departureDelay.text}</span>` : ''}
+          </div>
+
+          <!-- Intermediate Stops Toggle -->
+          ${hasStopovers ? `
+            <div class="pl-4 py-1 text-xs">
+              <button type="button" class="stopovers-toggle-btn text-[11px] text-slate-400 hover:text-slate-200 transition-colors flex items-center space-x-1">
+                <i data-lucide="list" class="w-3 h-3"></i>
+                <span>${stopoverCount} Zwischenhalte anzeigen</span>
+              </button>
+              <div class="stopovers-list hidden mt-2 pl-3 border-l border-slate-800 space-y-1.5 text-[11px] text-slate-400">
+                ${leg.stopovers.map(s => `
+                  <div class="flex items-center justify-between">
+                    <span>${Formatters.escapeHtml(s.name)}</span>
+                    <span class="font-mono">${Formatters.formatTimeOnly(s.arrival || s.departure)}</span>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          <!-- Arrival Stop -->
+          <div class="flex items-start justify-between text-xs pt-1 border-t border-slate-800/60">
+            <div class="space-y-0.5">
+              <div class="flex items-center space-x-2">
+                <span class="font-bold text-slate-200 text-sm">${arrTime}</span>
+                <span class="font-medium text-slate-300">${Formatters.escapeHtml(leg.destination?.name || '')}</span>
+              </div>
+              ${leg.destination?.platform ? `<div class="text-[11px] text-slate-400">Bahnsteig ${Formatters.escapeHtml(leg.destination.platform)}</div>` : ''}
+            </div>
+            ${leg.arrivalDelay?.isDelayed ? `<span class="text-rose-400 font-bold">${leg.arrivalDelay.text}</span>` : ''}
+          </div>
+        </div>
+      `);
+    }
+
+    return htmlParts.join('');
+  }
+};
+
+// ==========================================
+// 8. Search & View Controller
+// ==========================================
+const SearchController = {
+  initDateTimeInputs() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+
+    AppState.date = `${year}-${month}-${day}`;
+    AppState.time = `${hours}:${minutes}`;
+
+    DOM.dateInput.value = AppState.date;
+    DOM.timeInput.value = AppState.time;
+  },
+
+  setLoading(isLoading) {
+    AppState.isLoading = isLoading;
+
+    if (isLoading) {
+      const selectedCarrier = DOM.carrierSelect ? DOM.carrierSelect.value : AppState.carrier;
+      DOM.loadingText.textContent = selectedCarrier === 'westbahn'
+        ? 'Fahrpläne der Westbahn werden abgefragt.'
+        : 'Fahrpläne werden abgefragt.';
+
+      DOM.loadingState.classList.remove('hidden');
+      DOM.errorState.classList.add('hidden');
+      DOM.emptyState.classList.add('hidden');
+      DOM.resultsContainer.innerHTML = '';
+
+      // Switch button to "Suche abbrechen" with rose/amber gradient
+      DOM.submitBtn.innerHTML = `
+        <i data-lucide="x-circle" class="w-4 h-4 mr-1.5 animate-pulse"></i>
+        <span>Suche abbrechen</span>
+      `;
+      DOM.submitBtn.className = 'w-full py-2.5 px-5 btn-search-cancel font-semibold rounded-xl active:scale-[0.98] transition-all flex items-center justify-center space-x-1 cursor-pointer';
+      DOM.submitBtn.disabled = false;
     } else {
-      state.carrier = 'all';
-      elements.carrierSelect.value = 'all';
-    }
-  } catch (err) {
-    console.warn('localStorage read error:', err);
-  }
-}
+      DOM.loadingState.classList.add('hidden');
 
-/**
- * Setup DOM event listeners.
- */
-function setupEventListeners() {
-  // Form submission
-  elements.form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    if (state.isLoading) {
-      cancelSearch();
+      // Switch button back to "Verbindungen suchen" with #5EFCE8 -> #736EFE and white normal font
+      DOM.submitBtn.innerHTML = `
+        <i data-lucide="search" class="w-4 h-4 mr-1.5"></i>
+        <span>Verbindungen suchen</span>
+      `;
+      DOM.submitBtn.className = 'w-full py-2.5 px-5 btn-search-submit text-white font-normal rounded-xl active:scale-[0.98] transition-all flex items-center justify-center space-x-2 cursor-pointer';
+      DOM.submitBtn.disabled = false;
+    }
+
+    if (window.lucide) lucide.createIcons();
+  },
+
+  showError(message) {
+    DOM.errorMessage.textContent = 'Abfrage fehlgeschlagen';
+    DOM.errorDetails.textContent = message || 'Bitte überprüfe deine Eingabe.';
+    DOM.errorState.classList.remove('hidden');
+    DOM.loadingState.classList.add('hidden');
+    DOM.resultsContainer.innerHTML = '';
+    DOM.emptyState.classList.add('hidden');
+    if (window.lucide) lucide.createIcons();
+  },
+
+  cancelSearch() {
+    if (AppState.abortController) {
+      AppState.abortController.abort();
+      AppState.abortController = null;
+    }
+    this.setLoading(false);
+    if (AppState.journeys && AppState.journeys.length > 0) {
+      this.renderResults(AppState.journeys);
+    } else {
+      DOM.loadingState.classList.add('hidden');
+    }
+  },
+
+  renderResults(journeys) {
+    DOM.resultsContainer.innerHTML = '';
+
+    if (!journeys || journeys.length === 0) {
+      DOM.emptyState.classList.remove('hidden');
+      DOM.resultsCountBadge.textContent = '0 Züge';
+      if (AppState.direct) {
+        DOM.emptyStateAction?.classList.remove('hidden');
+      } else {
+        DOM.emptyStateAction?.classList.add('hidden');
+      }
+      if (window.lucide) lucide.createIcons();
       return;
     }
 
-    state.origin.name = elements.originInput.value.trim();
-    state.origin.id = elements.originId.value;
-    state.destination.name = elements.destinationInput.value.trim();
-    state.destination.id = elements.destinationId.value;
-    state.date = elements.dateInput.value;
-    state.time = elements.timeInput.value;
-    state.carrier = elements.carrierSelect.value;
-    state.direct = elements.directCheckbox.checked;
+    DOM.emptyState.classList.add('hidden');
+    DOM.resultsCountBadge.textContent = `${journeys.length} ${journeys.length === 1 ? 'Zug' : 'Züge'} (nächste 12 Std.)`;
 
-    // Persist preferences
+    journeys.forEach((journey, index) => {
+      const card = CardRenderer.createCard(journey, index);
+      DOM.resultsContainer.appendChild(card);
+    });
+
+    if (window.lucide) lucide.createIcons();
+  },
+
+  updatePaginationControls() {
+    if (AppState.pagination.earlierRef) {
+      DOM.earlierControls.classList.remove('hidden');
+    } else {
+      DOM.earlierControls.classList.add('hidden');
+    }
+
+    if (AppState.pagination.laterRef) {
+      DOM.laterControls.classList.remove('hidden');
+    } else {
+      DOM.laterControls.classList.add('hidden');
+    }
+  },
+
+  async performSearch(paginationOptions = {}) {
+    const origin = DOM.originId.value || DOM.originInput.value.trim();
+    const destination = DOM.destinationId.value || DOM.destinationInput.value.trim();
+
+    if (!origin || !destination) {
+      this.showError('Bitte Start- und Zielbahnhof angeben.');
+      return;
+    }
+
+    if (AppState.abortController) {
+      AppState.abortController.abort();
+    }
+    AppState.abortController = new AbortController();
+
+    this.setLoading(true);
+
+    // Update Route Overview Banner
+    DOM.bannerOrigin.textContent = DOM.originInput.value.trim() || 'Start';
+    DOM.bannerDestination.textContent = DOM.destinationInput.value.trim() || 'Ziel';
+    DOM.bannerDate.textContent = Formatters.formatDateLabel(DOM.dateInput.value);
+    DOM.routeBanner.classList.remove('hidden');
+
+    const params = new URLSearchParams({
+      origin,
+      destination,
+      date: DOM.dateInput.value,
+      time: DOM.timeInput.value,
+      carrier: DOM.carrierSelect.value,
+      direct: DOM.directCheckbox.checked ? 'true' : 'false',
+      hours: '12'
+    });
+
+    if (paginationOptions.earlierRef) params.append('earlierRef', paginationOptions.earlierRef);
+    if (paginationOptions.laterRef) params.append('laterRef', paginationOptions.laterRef);
+
     try {
-      localStorage.setItem('fahrplan_direct', state.direct ? 'true' : 'false');
-      localStorage.setItem('fahrplan_carrier', state.carrier);
+      const response = await fetch(`/api/fahrplan?${params.toString()}`, {
+        signal: AppState.abortController.signal
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Fehler beim Laden des Fahrplans.');
+      }
+
+      AppState.journeys = data.journeys || [];
+      AppState.pagination = data.pagination || { earlierRef: null, laterRef: null };
+
+      this.renderResults(AppState.journeys);
+      this.updatePaginationControls();
     } catch (err) {
-      console.warn('localStorage save error:', err);
+      if (err.name === 'AbortError') {
+        console.log('Search cancelled by user.');
+        return;
+      }
+      console.error('Search error:', err);
+      this.showError(err.message);
+    } finally {
+      AppState.abortController = null;
+      this.setLoading(false);
+    }
+  }
+};
+
+// ==========================================
+// 9. Application Initialization & Events
+// ==========================================
+document.addEventListener('DOMContentLoaded', () => {
+  // 1. Live Clock
+  LiveClock.start();
+
+  // 2. Date & Time Inputs
+  SearchController.initDateTimeInputs();
+
+  // 3. Restore persisted preferences from localStorage
+  const prefs = Storage.getPreferences();
+  AppState.direct = prefs.direct;
+  AppState.carrier = prefs.carrier;
+  DOM.directCheckbox.checked = AppState.direct;
+  DOM.carrierSelect.value = AppState.carrier;
+
+  // 4. Station inputs start completely empty
+  DOM.originInput.value = '';
+  DOM.originId.value = '';
+  DOM.clearOriginBtn.classList.add('hidden');
+
+  DOM.destinationInput.value = '';
+  DOM.destinationId.value = '';
+  DOM.clearDestinationBtn.classList.add('hidden');
+
+  // 5. Setup Autocomplete
+  Autocomplete.setup(DOM.originInput, DOM.originId, DOM.originDropdown, DOM.clearOriginBtn);
+  Autocomplete.setup(DOM.destinationInput, DOM.destinationId, DOM.destinationDropdown, DOM.clearDestinationBtn);
+
+  // 6. Setup Event Listeners
+  setupEventListeners();
+
+  // 7. Render Lucide icons
+  if (window.lucide) {
+    lucide.createIcons();
+  }
+});
+
+function setupEventListeners() {
+  // Form submission
+  DOM.form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (AppState.isLoading) {
+      SearchController.cancelSearch();
+      return;
     }
 
-    performSearch();
+    AppState.origin.name = DOM.originInput.value.trim();
+    AppState.origin.id = DOM.originId.value;
+    AppState.destination.name = DOM.destinationInput.value.trim();
+    AppState.destination.id = DOM.destinationId.value;
+    AppState.date = DOM.dateInput.value;
+    AppState.time = DOM.timeInput.value;
+    AppState.carrier = DOM.carrierSelect.value;
+    AppState.direct = DOM.directCheckbox.checked;
+
+    Storage.savePreferences({ direct: AppState.direct, carrier: AppState.carrier });
+    SearchController.performSearch();
   });
 
-  // Submit button direct click to toggle / cancel search
-  elements.submitBtn.addEventListener('click', (e) => {
-    if (state.isLoading) {
+  // Submit button click: handle cancel when loading
+  DOM.submitBtn.addEventListener('click', (e) => {
+    if (AppState.isLoading) {
       e.preventDefault();
-      cancelSearch();
+      SearchController.cancelSearch();
     }
   });
 
-  // "Jetzt" (Now) button
-  elements.setNowBtn.addEventListener('click', () => {
-    initDefaults();
-    performSearch();
+  // "Jetzt" (Now) button: updates time/date to current, without clearing station inputs!
+  DOM.setNowBtn.addEventListener('click', () => {
+    SearchController.initDateTimeInputs();
+    if (DOM.originInput.value.trim() && DOM.destinationInput.value.trim()) {
+      SearchController.performSearch();
+    }
   });
 
   // Station Swap button
-  elements.swapStationsBtn.addEventListener('click', () => {
-    const tempName = elements.originInput.value;
-    const tempId = elements.originId.value;
+  DOM.swapStationsBtn.addEventListener('click', () => {
+    const tempName = DOM.originInput.value;
+    const tempId = DOM.originId.value;
 
-    elements.originInput.value = elements.destinationInput.value;
-    elements.originId.value = elements.destinationId.value;
-    state.origin = { id: elements.originId.value, name: elements.originInput.value };
+    DOM.originInput.value = DOM.destinationInput.value;
+    DOM.originId.value = DOM.destinationId.value;
+    AppState.origin = { id: DOM.originId.value, name: DOM.originInput.value };
 
-    elements.destinationInput.value = tempName;
-    elements.destinationId.value = tempId;
-    state.destination = { id: elements.destinationId.value, name: elements.destinationInput.value };
+    DOM.destinationInput.value = tempName;
+    DOM.destinationId.value = tempId;
+    AppState.destination = { id: DOM.destinationId.value, name: DOM.destinationInput.value };
 
-    performSearch();
+    // Synchronize clear button visibility
+    DOM.clearOriginBtn.classList.toggle('hidden', !DOM.originInput.value.trim());
+    DOM.clearDestinationBtn.classList.toggle('hidden', !DOM.destinationInput.value.trim());
+
+    if (DOM.originInput.value.trim() && DOM.destinationInput.value.trim()) {
+      SearchController.performSearch();
+    }
   });
 
-  // Quick Chips Buttons
-  elements.quickStationChips.addEventListener('click', (e) => {
+  // Schnellwahl Buttons
+  DOM.quickStationChips.addEventListener('click', (e) => {
     const chip = e.target.closest('.quick-chip');
     if (!chip) return;
 
     const id = chip.dataset.id;
     const name = chip.dataset.name;
 
-    // If destination is already the chip, set origin instead; otherwise set destination
-    if (elements.destinationId.value === id) {
-      elements.originInput.value = name;
-      elements.originId.value = id;
-      state.origin = { id, name };
-      elements.clearOriginBtn.classList.remove('hidden');
+    if (!DOM.originInput.value.trim()) {
+      DOM.originInput.value = name;
+      DOM.originId.value = id;
+      AppState.origin = { id, name };
+      DOM.clearOriginBtn.classList.remove('hidden');
+      if (DOM.destinationInput.value.trim()) {
+        SearchController.performSearch();
+      }
+    } else if (!DOM.destinationInput.value.trim()) {
+      DOM.destinationInput.value = name;
+      DOM.destinationId.value = id;
+      AppState.destination = { id, name };
+      DOM.clearDestinationBtn.classList.remove('hidden');
+      if (DOM.originInput.value.trim()) {
+        SearchController.performSearch();
+      }
+    } else if (DOM.destinationId.value === id) {
+      DOM.originInput.value = name;
+      DOM.originId.value = id;
+      AppState.origin = { id, name };
+      DOM.clearOriginBtn.classList.remove('hidden');
+      SearchController.performSearch();
     } else {
-      elements.destinationInput.value = name;
-      elements.destinationId.value = id;
-      state.destination = { id, name };
-      elements.clearDestinationBtn.classList.remove('hidden');
+      DOM.destinationInput.value = name;
+      DOM.destinationId.value = id;
+      AppState.destination = { id, name };
+      DOM.clearDestinationBtn.classList.remove('hidden');
+      SearchController.performSearch();
     }
-
-    performSearch();
   });
 
   // Retry Button
-  elements.retryBtn.addEventListener('click', () => {
-    performSearch();
+  DOM.retryBtn.addEventListener('click', () => {
+    SearchController.performSearch();
   });
 
-  // Earlier / Later Pagination
-  elements.loadEarlierBtn.addEventListener('click', () => {
-    if (state.pagination.earlierRef) {
-      performSearch({ earlierRef: state.pagination.earlierRef });
-    }
-  });
-
-  elements.loadLaterBtn.addEventListener('click', () => {
-    if (state.pagination.laterRef) {
-      performSearch({ laterRef: state.pagination.laterRef });
+  // Pagination buttons
+  DOM.loadEarlierBtn.addEventListener('click', () => {
+    if (AppState.pagination.earlierRef) {
+      SearchController.performSearch({ earlierRef: AppState.pagination.earlierRef });
     }
   });
 
-  // Live filter changes
-  elements.carrierSelect.addEventListener('change', () => {
-    state.carrier = elements.carrierSelect.value;
-    try { localStorage.setItem('fahrplan_carrier', state.carrier); } catch (e) {}
-    performSearch();
-  });
-
-  elements.directCheckbox.addEventListener('change', () => {
-    state.direct = elements.directCheckbox.checked;
-    try { localStorage.setItem('fahrplan_direct', state.direct ? 'true' : 'false'); } catch (e) {}
-    performSearch();
-  });
-
-  // Action button in empty state to search with transfers
-  elements.showTransfersBtn?.addEventListener('click', () => {
-    elements.directCheckbox.checked = false;
-    state.direct = false;
-    try { localStorage.setItem('fahrplan_direct', 'false'); } catch (e) {}
-    performSearch();
-  });
-}
-
-/**
- * Autocomplete logic for station search inputs.
- */
-function setupAutocomplete(inputEl, idEl, dropdownEl, clearBtn) {
-  let debounceTimer = null;
-
-  // Clear button logic
-  clearBtn.addEventListener('click', () => {
-    inputEl.value = '';
-    idEl.value = '';
-    clearBtn.classList.add('hidden');
-    dropdownEl.classList.add('hidden');
-    inputEl.focus();
-  });
-
-  inputEl.addEventListener('input', () => {
-    const query = inputEl.value.trim();
-    if (query) {
-      clearBtn.classList.remove('hidden');
-    } else {
-      clearBtn.classList.add('hidden');
-      idEl.value = '';
-    }
-
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      fetchStations(query, dropdownEl, inputEl, idEl);
-    }, 200);
-  });
-
-  inputEl.addEventListener('focus', () => {
-    if (!inputEl.value.trim()) {
-      fetchStations('', dropdownEl, inputEl, idEl);
+  DOM.loadLaterBtn.addEventListener('click', () => {
+    if (AppState.pagination.laterRef) {
+      SearchController.performSearch({ laterRef: AppState.pagination.laterRef });
     }
   });
 
-  // Close dropdown when clicking outside
-  document.addEventListener('click', (e) => {
-    if (!inputEl.contains(e.target) && !dropdownEl.contains(e.target)) {
-      dropdownEl.classList.add('hidden');
+  // Filters
+  DOM.carrierSelect.addEventListener('change', () => {
+    AppState.carrier = DOM.carrierSelect.value;
+    Storage.savePreferences({ carrier: AppState.carrier });
+    if (DOM.originInput.value.trim() && DOM.destinationInput.value.trim()) {
+      SearchController.performSearch();
     }
   });
-}
 
-/**
- * Fetch stations from serverless API and populate dropdown.
- */
-async function fetchStations(query, dropdownEl, inputEl, idEl) {
-  try {
-    const url = `/api/stations?q=${encodeURIComponent(query)}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-    const data = await res.json();
-
-    if (data.success && data.stations && data.stations.length > 0) {
-      renderDropdownItems(data.stations, dropdownEl, inputEl, idEl);
-      dropdownEl.classList.remove('hidden');
-    } else {
-      dropdownEl.innerHTML = '<li class="text-xs text-slate-500 py-2 text-center">Kein Bahnhof gefunden</li>';
-      dropdownEl.classList.remove('hidden');
+  DOM.directCheckbox.addEventListener('change', () => {
+    AppState.direct = DOM.directCheckbox.checked;
+    Storage.savePreferences({ direct: AppState.direct });
+    if (DOM.originInput.value.trim() && DOM.destinationInput.value.trim()) {
+      SearchController.performSearch();
     }
-  } catch (err) {
-    console.warn('Stations lookup failed:', err);
-    dropdownEl.classList.add('hidden');
-  }
-}
-
-/**
- * Render items in autocomplete dropdown.
- */
-function renderDropdownItems(stations, dropdownEl, inputEl, idEl) {
-  dropdownEl.innerHTML = '';
-  stations.forEach((st) => {
-    const li = document.createElement('li');
-    li.innerHTML = `
-      <div class="flex items-center space-x-2">
-        <i data-lucide="${st.isPopular ? 'star' : 'map-pin'}" class="w-3.5 h-3.5 ${st.isPopular ? 'text-amber-400' : 'text-slate-400'}"></i>
-        <span class="font-medium">${escapeHtml(st.name)}</span>
-      </div>
-      <span class="text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded font-mono">${st.shortName || ''}</span>
-    `;
-
-    li.addEventListener('click', () => {
-      inputEl.value = st.name;
-      idEl.value = st.id;
-      dropdownEl.classList.add('hidden');
-      if (window.lucide) lucide.createIcons();
-    });
-
-    dropdownEl.appendChild(li);
   });
 
-  if (window.lucide) lucide.createIcons();
-}
-
-/**
- * Execute timetable query against the Netlify serverless function.
- */
-async function performSearch(paginationOptions = {}) {
-  const origin = elements.originId.value || elements.originInput.value.trim();
-  const destination = elements.destinationId.value || elements.destinationInput.value.trim();
-
-  if (!origin || !destination) {
-    showError('Bitte Start- und Zielbahnhof angeben.');
-    return;
-  }
-
-  // Cancel prior active request if any
-  if (currentAbortController) {
-    currentAbortController.abort();
-  }
-  currentAbortController = new AbortController();
-
-  setLoading(true);
-
-  // Update Route Banner
-  elements.bannerOrigin.textContent = elements.originInput.value.trim() || 'Start';
-  elements.bannerDestination.textContent = elements.destinationInput.value.trim() || 'Ziel';
-  elements.bannerDate.textContent = formatDateLabel(elements.dateInput.value);
-  elements.routeBanner.classList.remove('hidden');
-
-  const params = new URLSearchParams({
-    origin,
-    destination,
-    date: elements.dateInput.value,
-    time: elements.timeInput.value,
-    carrier: elements.carrierSelect.value,
-    direct: elements.directCheckbox.checked ? 'true' : 'false',
-    hours: '12'
+  DOM.showTransfersBtn?.addEventListener('click', () => {
+    DOM.directCheckbox.checked = false;
+    AppState.direct = false;
+    Storage.savePreferences({ direct: false });
+    SearchController.performSearch();
   });
-
-  if (paginationOptions.earlierRef) params.append('earlierRef', paginationOptions.earlierRef);
-  if (paginationOptions.laterRef) params.append('laterRef', paginationOptions.laterRef);
-
-  try {
-    const response = await fetch(`/api/fahrplan?${params.toString()}`, {
-      signal: currentAbortController.signal
-    });
-    const data = await response.json();
-
-    if (!response.ok || !data.success) {
-      throw new Error(data.error || 'Fehler beim Laden des Fahrplans.');
-    }
-
-    state.journeys = data.journeys || [];
-    state.pagination = data.pagination || { earlierRef: null, laterRef: null };
-
-    renderResults(state.journeys);
-    updatePaginationControls();
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      console.log('Fahrplan query cancelled by user.');
-      return;
-    }
-    console.error('Search error:', err);
-    showError(err.message);
-  } finally {
-    currentAbortController = null;
-    setLoading(false);
-  }
 }
-
-/**
- * Cancel the currently running search query.
- */
-function cancelSearch() {
-  if (currentAbortController) {
-    currentAbortController.abort();
-    currentAbortController = null;
-  }
-  setLoading(false);
-  if (state.journeys && state.journeys.length > 0) {
-    renderResults(state.journeys);
-  } else {
-    elements.loadingState.classList.add('hidden');
-  }
-}
-
-/**
- * Render list of journey cards.
- */
-function renderResults(journeys) {
-  elements.resultsContainer.innerHTML = '';
-
-  if (!journeys || journeys.length === 0) {
-    elements.emptyState.classList.remove('hidden');
-    elements.resultsCountBadge.textContent = '0 Züge';
-    if (state.direct) {
-      elements.emptyStateAction?.classList.remove('hidden');
-    } else {
-      elements.emptyStateAction?.classList.add('hidden');
-    }
-    if (window.lucide) {
-      lucide.createIcons();
-    }
-    return;
-  }
-
-  elements.emptyState.classList.add('hidden');
-  elements.resultsCountBadge.textContent = `${journeys.length} ${journeys.length === 1 ? 'Zug' : 'Züge'} (nächste 12 Std.)`;
-
-  journeys.forEach((journey, index) => {
-    const card = createJourneyCard(journey, index);
-    elements.resultsContainer.appendChild(card);
-  });
-
-  if (window.lucide) {
-    lucide.createIcons();
-  }
-}
-
-/**
- * Build HTML DOM element for a single journey card.
- */
-function createJourneyCard(journey, index) {
-  const card = document.createElement('div');
-  const carrierKey = journey.carrierSummary?.primary || 'other';
-  card.className = `journey-card stripe-${carrierKey} rounded-xl overflow-hidden animate-slide-in`;
-  card.style.animationDelay = `${index * 30}ms`;
-
-  const depTime = formatTimeOnly(journey.departureTime);
-  const arrTime = formatTimeOnly(journey.arrivalTime);
-  const originShort = shortenStation(journey.originName);
-  const destShort = shortenStation(journey.destinationName);
-  const depPlat = journey.departurePlatform ? `Gl. ${journey.departurePlatform}` : '';
-  const arrPlat = journey.arrivalPlatform ? `Gl. ${journey.arrivalPlatform}` : '';
-  const mobilePill = getMobileCarrierPill(journey);
-
-  // Desktop Carrier Badge HTML (Dynamic for all European UIC operators)
-  const primaryKey = journey.carrierSummary?.primary || 'other';
-  const carrierName = journey.carrierSummary?.label || 'Verbindung';
-  const badgeClass = journey.carrierSummary?.badgeClass || 'badge-local';
-  const iconName = primaryKey === 'kombi' ? 'git-merge' : 'train';
-
-  const carrierBadgeHtml = `
-    <span class="inline-flex items-center px-3 py-1 rounded-full ${badgeClass} text-xs font-bold tracking-wide">
-      <i data-lucide="${iconName}" class="w-3.5 h-3.5 mr-1.5"></i> ${escapeHtml(carrierName)}
-    </span>`;
-
-  // Delay Badges
-  const depDelayHtml = journey.departureDelay?.isDelayed
-    ? `<span class="ml-2 text-xs font-bold text-rose-400 bg-rose-950/80 px-2 py-0.5 rounded border border-rose-800">${journey.departureDelay.text}</span>`
-    : `<span class="ml-2 text-xs font-semibold text-emerald-400">Pünktlich</span>`;
-
-  // Train Products Label (Equal fixed width and height for all train badges, no line-breaks)
-  const trainNames = journey.legs
-    .filter(l => l.line)
-    .map(l => `<span class="inline-flex items-center justify-center w-44 h-7 whitespace-nowrap bg-slate-800 text-slate-200 border border-slate-700/80 px-2.5 rounded-lg text-xs font-mono font-bold mr-2 text-center flex-shrink-0">${escapeHtml(l.line.name)}</span>`)
-    .join('');
-
-  // Transfer summary for display
-  let transferSummaryText = '';
-  if (!journey.isDirect && journey.legs && journey.legs.length > 1) {
-    const transferStops = [];
-    for (let i = 0; i < journey.legs.length - 1; i++) {
-      const leg = journey.legs[i];
-      if (leg.destination?.name && !leg.walking) {
-        transferStops.push(shortenStation(leg.destination.name));
-      }
-    }
-    const distinctStops = [...new Set(transferStops)];
-    if (distinctStops.length > 0) {
-      transferSummaryText = ` in ${distinctStops.join(', ')}`;
-    }
-  }
-
-  // Transfer count label
-  const transferLabel = journey.isDirect
-    ? `<span class="text-emerald-400 font-semibold flex items-center"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1"></i> Direktverbindung</span>`
-    : `<span class="text-amber-400 font-semibold flex items-center"><i data-lucide="git-branch" class="w-3.5 h-3.5 mr-1"></i> ${journey.transfers} ${journey.transfers === 1 ? 'Umstieg' : 'Umstiege'}${escapeHtml(transferSummaryText)}</span>`;
-
-  card.innerHTML = `
-    <!-- 📱 MOBILE ULTRA-COMPACT VIEW (ca. 52px Höhe -> 10 Züge gleichzeitig am Smartphone sichtbar!) -->
-    <div class="sm:hidden block px-3 py-2 cursor-pointer mobile-card-trigger hover:bg-slate-800/40 transition-colors select-none">
-      <div class="grid grid-cols-[auto,1fr,auto] items-center gap-2">
-        <!-- Left: Times & Delay -->
-        <div class="flex items-baseline space-x-1.5">
-          <span class="font-display font-extrabold text-[15px] text-white tracking-tight">${depTime}</span>
-          <span class="text-slate-500 text-xs">→</span>
-          <span class="font-display font-extrabold text-[15px] text-white tracking-tight">${arrTime}</span>
-          ${journey.departureDelay?.isDelayed 
-            ? `<span class="text-[10px] font-bold text-rose-400 bg-rose-950 px-1 py-0.2 rounded border border-rose-800">${journey.departureDelay.text}</span>` 
-            : `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" title="Pünktlich"></span>`
-          }
-        </div>
-
-        <!-- Center: Fahrtdauer (Zentriert) -->
-        <div class="text-center">
-          <span class="inline-block text-[11px] font-bold text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded-md tracking-tight">${formatDurationShort(journey.durationMinutes)}</span>
-        </div>
-
-        <!-- Right: Carrier Badge Pill -->
-        <div class="flex items-center justify-end">
-          ${mobilePill}
-        </div>
-      </div>
-
-      <!-- Line 2: Stations & Transfers (Expanded to use full width to the right) -->
-      <div class="flex items-center justify-between text-[11px] text-slate-400 mt-0.5 leading-tight gap-2">
-        <div class="truncate flex-1 min-w-0 pr-2 text-slate-300">
-          <span>${escapeHtml(originShort)}</span>${depPlat ? ` <span class="text-slate-500 text-[10px]">(${depPlat})</span>` : ''}
-          <span class="text-slate-600">→</span>
-          <span>${escapeHtml(destShort)}</span>${arrPlat ? ` <span class="text-slate-500 text-[10px]">(${arrPlat})</span>` : ''}
-        </div>
-        <div class="flex items-center space-x-1 flex-shrink-0 text-[10px]">
-          <span class="${journey.isDirect ? 'text-emerald-400 font-semibold' : 'text-amber-400 font-medium'}">
-            ${journey.isDirect ? 'Direkt' : `${journey.transfers} Umst.${transferSummaryText ? ` (${escapeHtml(transferSummaryText.trim().replace(/^in\s*/, ''))})` : ''}`}
-          </span>
-          <i data-lucide="chevron-down" class="mobile-chevron w-3 h-3 text-slate-500 transition-transform duration-200"></i>
-        </div>
-      </div>
-    </div>
-
-    <!-- 💻 DESKTOP / TABLET SPACIOUS VIEW (sm:block) -->
-    <div class="hidden sm:block p-5 sm:p-6">
-      <!-- Top Row: Carrier Badge & Products -->
-      <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800/80">
-        <div class="flex items-center space-x-2">
-          ${carrierBadgeHtml}
-          <div class="flex flex-wrap items-center mt-1 sm:mt-0">${trainNames}</div>
-        </div>
-        <div class="text-xs text-slate-400">
-          ${transferLabel}
-        </div>
-      </div>
-
-      <!-- Middle Row: Times, Stations, Duration -->
-      <div class="grid grid-cols-1 sm:grid-cols-[1fr,auto,1fr] gap-4 items-center py-4">
-        
-        <!-- Departure -->
-        <div class="space-y-1">
-          <div class="flex items-baseline space-x-2">
-            <span class="font-display text-2xl sm:text-3xl font-extrabold text-white tracking-tight">${depTime}</span>
-            ${depDelayHtml}
-          </div>
-          <div class="text-sm font-semibold text-slate-200 truncate" title="${escapeHtml(journey.originName)}">
-            ${escapeHtml(journey.originName)}
-          </div>
-          ${journey.departurePlatform ? `<div class="text-xs text-slate-400 font-medium"><i data-lucide="signpost" class="inline w-3 h-3 mr-1 text-slate-400"></i> Bahnsteig ${escapeHtml(journey.departurePlatform)}</div>` : ''}
-        </div>
-
-        <!-- Duration Visual Indicator & Interactive Details Toggle -->
-        <div class="flex flex-col items-center justify-center">
-          <button
-            type="button"
-            class="duration-toggle-btn group flex flex-col items-center justify-center px-3.5 py-1.5 rounded-xl hover:bg-slate-800/80 active:scale-95 border border-transparent hover:border-slate-700/80 transition-all cursor-pointer"
-            title="Klicken für Fahrtverlauf &amp; Details"
-          >
-            <div class="text-xs font-bold text-slate-300 group-hover:text-rose-400 tracking-wider flex items-center transition-colors">
-              <i data-lucide="clock" class="w-3.5 h-3.5 mr-1 text-slate-400 group-hover:text-rose-400 transition-colors"></i>
-              <span>${journey.durationFormatted}</span>
-              <i data-lucide="chevron-down" class="duration-chevron w-3.5 h-3.5 ml-1 text-slate-500 group-hover:text-rose-400 transition-transform duration-200"></i>
-            </div>
-            <div class="w-20 sm:w-28 h-0.5 bg-gradient-to-r from-rose-500 via-amber-400 to-sky-400 my-1.5 relative">
-              <div class="w-2 h-2 rounded-full bg-slate-900 border-2 border-rose-500 absolute -top-0.5 left-0"></div>
-              <div class="w-2 h-2 rounded-full bg-slate-900 border-2 border-sky-400 absolute -top-0.5 right-0"></div>
-            </div>
-            <div class="text-[11px] text-slate-400 group-hover:text-slate-300 transition-colors font-medium flex items-center space-x-1">
-              <span>${journey.isDirect ? 'Direkt' : `${journey.transfers} Umst.`}</span>
-              <span class="text-slate-600">•</span>
-              <span class="text-rose-400/90 font-medium group-hover:underline">Details</span>
-            </div>
-          </button>
-        </div>
-
-        <!-- Arrival -->
-        <div class="space-y-1 sm:text-right">
-          <div class="flex items-baseline space-x-2 sm:justify-end">
-            <span class="font-display text-2xl sm:text-3xl font-extrabold text-white tracking-tight">${arrTime}</span>
-          </div>
-          <div class="text-sm font-semibold text-slate-200 truncate" title="${escapeHtml(journey.destinationName)}">
-            ${escapeHtml(journey.destinationName)}
-          </div>
-          ${journey.arrivalPlatform ? `<div class="text-xs text-slate-400 font-medium"><i data-lucide="signpost" class="inline w-3 h-3 mr-1 text-slate-400"></i> Bahnsteig ${escapeHtml(journey.arrivalPlatform)}</div>` : ''}
-        </div>
-
-      </div>
-    </div>
-
-    <!-- Collapsible Legs Details Timeline (opened via duration or mobile card click) -->
-    <div class="legs-details-panel hidden px-3 pb-3 sm:px-6 sm:pb-5 pt-2 sm:pt-4 border-t border-slate-800/80 space-y-3">
-      ${renderLegsTimeline(journey.legs)}
-    </div>
-  `;
-
-  // Attach toggle listener on both mobile trigger and desktop duration button
-  const mobileTrigger = card.querySelector('.mobile-card-trigger');
-  const desktopDurationBtn = card.querySelector('.duration-toggle-btn');
-  const detailsPanel = card.querySelector('.legs-details-panel');
-  const desktopChevron = desktopDurationBtn?.querySelector('.duration-chevron');
-  const mobileChevron = mobileTrigger?.querySelector('.mobile-chevron');
-
-  function toggleDetails() {
-    const isHidden = detailsPanel.classList.contains('hidden');
-    if (isHidden) {
-      detailsPanel.classList.remove('hidden');
-      if (desktopChevron) desktopChevron.style.transform = 'rotate(180deg)';
-      if (mobileChevron) mobileChevron.style.transform = 'rotate(180deg)';
-    } else {
-      detailsPanel.classList.add('hidden');
-      if (desktopChevron) desktopChevron.style.transform = 'rotate(0deg)';
-      if (mobileChevron) mobileChevron.style.transform = 'rotate(0deg)';
-    }
-  }
-
-  if (mobileTrigger) mobileTrigger.addEventListener('click', toggleDetails);
-  if (desktopDurationBtn) desktopDurationBtn.addEventListener('click', toggleDetails);
-
-  return card;
-}
-
-/**
- * Render the step-by-step leg timeline for a journey, with highlighted transfer transition banners.
- */
-function renderLegsTimeline(legs) {
-  if (!legs || legs.length === 0) return '';
-
-  const htmlParts = [];
-
-  for (let i = 0; i < legs.length; i++) {
-    const leg = legs[i];
-
-    // If walking is just an internal station platform change, incorporate it into the transfer banner
-    const isStationInternalWalk = leg.walking && (
-      !leg.origin?.name || 
-      leg.origin?.name === leg.destination?.name ||
-      (i > 0 && legs[i-1].destination?.name === leg.destination?.name)
-    );
-
-    if (isStationInternalWalk) {
-      continue;
-    }
-
-    // Render transfer transition banner between two train legs
-    if (i > 0) {
-      const prevLeg = legs[i - 1];
-      if (prevLeg && prevLeg.arrival && leg.departure) {
-        const waitMin = Math.round((new Date(leg.departure).getTime() - new Date(prevLeg.arrival).getTime()) / 60000);
-        const transferStationName = shortenStation(leg.origin?.name || prevLeg.destination?.name || 'Bahnhof');
-        const prevPlat = prevLeg.arrivalPlatform || prevLeg.destination?.platform;
-        const nextPlat = leg.departurePlatform || leg.origin?.platform;
-        const platInfo = prevPlat && nextPlat ? `Gl. ${prevPlat} → Gl. ${nextPlat}` : (nextPlat ? `Ab Gl. ${nextPlat}` : '');
-
-        htmlParts.push(`
-          <div class="flex items-center justify-between px-3.5 py-2 my-2 bg-amber-950/40 border border-amber-600/50 rounded-xl text-xs text-amber-200">
-            <div class="flex items-center space-x-2">
-              <i data-lucide="git-branch" class="w-4 h-4 text-amber-400 flex-shrink-0"></i>
-              <div>
-                <span class="font-bold">Umstieg in ${escapeHtml(transferStationName)}</span>
-                <span class="text-amber-300/80 font-normal ml-1.5">• ${waitMin >= 0 ? `${waitMin} Min. Übergangszeit` : 'Direkter Anschluss'}</span>
-              </div>
-            </div>
-            ${platInfo ? `<span class="text-[11px] font-mono text-amber-300 font-semibold bg-amber-900/60 px-2 py-0.5 rounded border border-amber-700/60">${escapeHtml(platInfo)}</span>` : ''}
-          </div>
-        `);
-      }
-    }
-
-    if (leg.walking) {
-      htmlParts.push(`
-        <div class="flex items-start space-x-3 text-xs text-slate-400 py-1.5 pl-3 border-l-2 border-dashed border-slate-700 ml-4 my-1">
-          <i data-lucide="footprints" class="w-4 h-4 text-slate-500"></i>
-          <span>Fußweg (${leg.durationFormatted || 'ca. 5 Min.'}) zu ${escapeHtml(leg.destination?.name || '')}</span>
-        </div>
-      `);
-      continue;
-    }
-
-    const legCarrier = leg.carrier || {};
-    const lineName = leg.line?.name || 'Zug';
-    const direction = leg.line?.direction ? `Richtung ${escapeHtml(leg.line.direction)}` : '';
-    const depTime = formatTimeOnly(leg.departure);
-    const arrTime = formatTimeOnly(leg.arrival);
-
-    const hasStopovers = leg.stopovers && leg.stopovers.length > 0;
-    const stopoverCount = hasStopovers ? leg.stopovers.length : 0;
-
-    htmlParts.push(`
-      <div class="bg-slate-900/90 rounded-xl p-4 border border-slate-800 space-y-3">
-        
-        <!-- Leg Header -->
-        <div class="flex items-center justify-between text-xs">
-          <div class="flex items-center space-x-2">
-            <span class="inline-flex items-center px-2 py-0.5 rounded font-bold ${legCarrier.badgeClass || 'badge-other'}">
-              ${escapeHtml(legCarrier.name || 'Zug')}
-            </span>
-            <span class="font-mono font-bold text-slate-200 inline-block min-w-[6.5rem] text-center">${escapeHtml(lineName)}</span>
-            <span class="text-slate-400 text-[11px]">${direction}</span>
-          </div>
-          <span class="text-slate-400 font-mono">${leg.durationFormatted}</span>
-        </div>
-
-        <!-- Departure Stop -->
-        <div class="flex items-start justify-between text-xs">
-          <div class="space-y-0.5">
-            <div class="flex items-center space-x-2">
-              <span class="font-bold text-slate-200 text-sm">${depTime}</span>
-              <span class="font-medium text-slate-300">${escapeHtml(leg.origin?.name || '')}</span>
-            </div>
-            ${leg.origin?.platform ? `<div class="text-[11px] text-slate-400">Bahnsteig ${escapeHtml(leg.origin.platform)}</div>` : ''}
-          </div>
-          ${leg.departureDelay?.isDelayed ? `<span class="text-rose-400 font-bold">${leg.departureDelay.text}</span>` : ''}
-        </div>
-
-        <!-- Intermediate Stops Toggle -->
-        ${hasStopovers ? `
-          <div class="pl-4 py-1 text-xs">
-            <button type="button" class="stopovers-toggle-btn text-[11px] text-slate-400 hover:text-slate-200 transition-colors flex items-center space-x-1" onclick="this.nextElementSibling.classList.toggle('hidden')">
-              <i data-lucide="list" class="w-3 h-3"></i>
-              <span>${stopoverCount} Zwischenhalte anzeigen</span>
-            </button>
-            <div class="stopovers-list hidden mt-2 pl-3 border-l border-slate-800 space-y-1.5 text-[11px] text-slate-400">
-              ${leg.stopovers.map(s => `
-                <div class="flex items-center justify-between">
-                  <span>${escapeHtml(s.name)}</span>
-                  <span class="font-mono">${formatTimeOnly(s.arrival || s.departure)}</span>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        ` : ''}
-
-        <!-- Arrival Stop -->
-        <div class="flex items-start justify-between text-xs pt-1 border-t border-slate-800/60">
-          <div class="space-y-0.5">
-            <div class="flex items-center space-x-2">
-              <span class="font-bold text-slate-200 text-sm">${arrTime}</span>
-              <span class="font-medium text-slate-300">${escapeHtml(leg.destination?.name || '')}</span>
-            </div>
-            ${leg.destination?.platform ? `<div class="text-[11px] text-slate-400">Bahnsteig ${escapeHtml(leg.destination.platform)}</div>` : ''}
-          </div>
-          ${leg.arrivalDelay?.isDelayed ? `<span class="text-rose-400 font-bold">${leg.arrivalDelay.text}</span>` : ''}
-        </div>
-
-      </div>
-    `);
-  }
-
-  return htmlParts.join('');
-}
-
-/**
- * Returns booking or info URL depending on carrier.
- */
-function getBookingUrl(journey) {
-  if (journey.carrierSummary?.primary === 'westbahn') {
-    return 'https://westbahn.at';
-  }
-  return 'https://fahrplan.oebb.at';
-}
-
-/**
- * Update visibility and state of earlier/later pagination buttons.
- */
-function updatePaginationControls() {
-  if (state.pagination.earlierRef) {
-    elements.earlierControls.classList.remove('hidden');
-  } else {
-    elements.earlierControls.classList.add('hidden');
-  }
-
-  if (state.pagination.laterRef) {
-    elements.laterControls.classList.remove('hidden');
-  } else {
-    elements.laterControls.classList.add('hidden');
-  }
-}
-
-/**
- * UI Loading State helper.
- */
-function setLoading(loading) {
-  state.isLoading = loading;
-  if (loading) {
-    if (elements.loadingText) {
-      const selectedCarrier = elements.carrierSelect ? elements.carrierSelect.value : state.carrier;
-      if (selectedCarrier === 'westbahn') {
-        elements.loadingText.textContent = 'Fahrpläne der Westbahn werden abgefragt.';
-      } else {
-        elements.loadingText.textContent = 'Fahrpläne werden abgefragt.';
-      }
-    }
-    elements.loadingState.classList.remove('hidden');
-    elements.errorState.classList.add('hidden');
-    elements.emptyState.classList.add('hidden');
-    elements.resultsContainer.innerHTML = '';
-
-    // Switch button to "Suche abbrechen"
-    elements.submitBtn.innerHTML = `
-      <i data-lucide="x-circle" class="w-4 h-4 mr-1.5 animate-pulse"></i>
-      <span>Suche abbrechen</span>
-    `;
-    elements.submitBtn.className = 'w-full py-2.5 px-5 bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white font-semibold rounded-xl shadow-lg shadow-red-900/50 active:scale-[0.98] transition-all flex items-center justify-center space-x-1 cursor-pointer';
-    elements.submitBtn.disabled = false;
-  } else {
-    elements.loadingState.classList.add('hidden');
-
-    // Switch button back to "Verbindungen suchen"
-    elements.submitBtn.innerHTML = `
-      <i data-lucide="search" class="w-4 h-4 mr-1.5"></i>
-      <span>Verbindungen suchen</span>
-    `;
-    elements.submitBtn.className = 'w-full py-2.5 px-5 bg-gradient-to-r from-rose-600 via-rose-500 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-semibold rounded-xl shadow-lg shadow-rose-900/40 hover:shadow-rose-900/60 active:scale-[0.98] transition-all flex items-center justify-center space-x-2 cursor-pointer';
-    elements.submitBtn.disabled = false;
-  }
-
-  if (window.lucide) {
-    lucide.createIcons();
-  }
-}
-
-/**
- * Display error banner.
- */
-function showError(message) {
-  elements.errorMessage.textContent = 'Abfrage fehlgeschlagen';
-  elements.errorDetails.textContent = message || 'Die Fahrplandaten konnten nicht geladen werden.';
-  elements.errorState.classList.remove('hidden');
-  elements.resultsContainer.innerHTML = '';
-  elements.emptyState.classList.add('hidden');
-}
-
-/**
- * Format ISO datetime string to HH:mm.
- */
-function formatTimeOnly(isoString) {
-  if (!isoString) return '--:--';
-  const d = new Date(isoString);
-  if (isNaN(d.getTime())) return '--:--';
-  return d.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit', hour12: false });
-}
-
-/**
- * Format date string into human readable German date.
- */
-function formatDateLabel(dateString) {
-  if (!dateString) return 'Heute';
-  const d = new Date(`${dateString}T12:00:00`);
-  if (isNaN(d.getTime())) return dateString;
-
-  const today = new Date();
-  if (
-    d.getDate() === today.getDate() &&
-    d.getMonth() === today.getMonth() &&
-    d.getFullYear() === today.getFullYear()
-  ) {
-    return 'Heute, ' + d.toLocaleDateString('de-AT', { day: 'numeric', month: 'short' });
-  }
-
-  return d.toLocaleDateString('de-AT', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
-}
-
-/**
- * Escape string for safe HTML rendering.
- */
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
-/**
- * Shorten station name for compact mobile display.
- */
-function shortenStation(name) {
-  if (!name) return '';
-  return name
-    .replace(/\s*\(Bahnsteige[^)]*\)/gi, '')
-    .replace(/\s*\(U\)/gi, '')
-    .replace(/\s*Bahnhst/gi, '')
-    .replace(/Linz\/Donau/gi, 'Linz')
-    .replace(/Wien Westbahnhof/gi, 'Wien West')
-    .replace(/Wien Hauptbahnhof/gi, 'Wien Hbf')
-    .replace(/Flughafen Wien Bahnhof/gi, 'Flughafen Wien')
-    .trim();
-}
-
-/**
- * Format minutes into concise format (e.g. "1h 15m") for mobile display.
- */
-function formatDurationShort(minutes) {
-  if (isNaN(minutes) || minutes < 0) return '--';
-  const h = Math.floor(minutes / 60);
-  const m = Math.round(minutes % 60);
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
-}
-
-/**
- * Helper to strip internal train numbers for concise line pill display.
- */
-function extractCleanLine(name) {
-  if (!name) return '';
-  return name.replace(/\s*\(Zug-Nr\.[^)]*\)/i, '').trim();
-}
-
-/**
- * Generate compact mobile badge pill for carrier and line.
- * For connections with transfers, displays both train products (e.g. "R56 ➔ RJX" or "TGV ➔ IC").
- */
-function getMobileCarrierPill(journey) {
-  const primary = journey.carrierSummary?.primary || 'other';
-  const badgeClass = journey.carrierSummary?.badgeClass || 'badge-local';
-  const trainLegs = (journey.legs || []).filter(l => l.line);
-  const badgeClasses = 'w-[128px] inline-flex items-center justify-center text-center font-mono font-bold text-[10px] py-0.5 rounded tracking-tight flex-shrink-0 truncate';
-  
-  if (trainLegs.length === 0) {
-    return `<span class="${badgeClasses} badge-local">Verbindung</span>`;
-  }
-
-  // Multi-leg journey with transfer: show both train lines
-  if (trainLegs.length > 1) {
-    const l1 = extractCleanLine(trainLegs[0]?.line?.name) || 'Zug';
-    const l2 = extractCleanLine(trainLegs[1]?.line?.name) || 'Zug';
-    const multiLabel = `${l1} ➔ ${l2}`;
-    const pillClass = primary === 'kombi' ? 'badge-kombi' : badgeClass;
-    return `<span class="${badgeClasses} ${pillClass}" title="${escapeHtml(multiLabel)}">${escapeHtml(multiLabel)}</span>`;
-  }
-
-  // Direct connection
-  const firstLineName = trainLegs[0]?.line?.name || '';
-  if (primary === 'westbahn') {
-    const cleanNum = firstLineName.replace(/^WB\s*/i, '');
-    return `<span class="${badgeClasses} badge-westbahn">WB ${escapeHtml(cleanNum || 'Zug')}</span>`;
-  }
-  return `<span class="${badgeClasses} ${badgeClass}">${escapeHtml(firstLineName || 'Zug')}</span>`;
-}
-

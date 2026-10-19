@@ -1,4 +1,4 @@
-# 🚆 FahrplanAT – Kombinierte ÖBB & WESTbahn Fahrplanauskunft
+# 🚆 Fahrpläne EU – Zugfahrpläne Europas
 
 > Moderne, responsive Web-Applikation zur synchronen Fahrplanabfrage für Österreich mit Fokus auf die **Weststrecke** und den **Flughafen Wien-Schwechat**. Optimiert für Serverless-Hosting auf **Netlify**.
 

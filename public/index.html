@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Österreich Fahrplan | ÖBB & WESTbahn Kombi-Abfrage</title>
-  <meta name="description" content="Kombinierte Fahrplanabfrage für Österreich mit Fokus auf Weststrecke und Flughafen Wien. Schneller Vergleich von ÖBB und WESTbahn in Echtzeit.">
+  <title>Fahrpläne EU | Zugfahrpläne Europas</title>
+  <meta name="description" content="Zugfahrpläne Europas – Schnelle Fahrplanabfrage und Vergleich in Echtzeit.">
   
   <!-- Google Fonts: Inter & Outfit -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -43,7 +43,7 @@
   <script src="https://unpkg.com/lucide@latest"></script>
 
   <!-- Custom Styles -->
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=1.4.0">
 </head>
 <body class="min-h-full flex flex-col font-sans bg-slate-950 text-slate-100 antialiased selection:bg-rose-500 selection:text-white">
 
@@ -58,29 +58,22 @@
   <header class="border-b border-slate-800/80 bg-slate-900/80 backdrop-blur-md sticky top-0 z-40">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
       <div class="flex items-center space-x-3">
-        <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-rose-600 via-amber-500 to-sky-500 p-0.5 shadow-lg shadow-rose-950/50 flex items-center justify-center">
+        <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-[#5EFCE8] to-[#736EFE] p-0.5 shadow-lg shadow-indigo-950/50 flex items-center justify-center">
           <div class="w-full h-full bg-slate-900 rounded-[10px] flex items-center justify-center text-white">
-            <i data-lucide="train" class="w-5 h-5 text-rose-500"></i>
+            <i data-lucide="train" class="w-5 h-5 text-[#5EFCE8]"></i>
           </div>
         </div>
         <div>
-          <h1 class="font-display font-extrabold text-xl tracking-tight text-white flex items-center gap-1.5">
-            Fahrplan<span class="bg-gradient-to-r from-rose-500 to-sky-400 bg-clip-text text-transparent">AT</span>
+          <h1 class="font-display font-semibold text-xl tracking-tight text-white flex items-center gap-1.5">
+            Fahrpläne<span class="bg-gradient-to-r from-[#5EFCE8] to-[#736EFE] bg-clip-text text-transparent">EU</span>
           </h1>
-          <p class="text-xs text-slate-400 hidden sm:block">Kombinierte Abfrage: ÖBB & WESTbahn</p>
+          <p class="text-xs text-slate-400 hidden sm:block">Zugfahrpläne Europas</p>
         </div>
       </div>
 
-      <!-- Operator Badges Header -->
-      <div class="flex items-center space-x-2 text-xs">
-        <span class="inline-flex items-center px-2.5 py-1 rounded-full bg-red-950/60 border border-red-800/60 text-red-300 font-semibold shadow-sm">
-          <span class="w-2 h-2 rounded-full bg-red-500 mr-1.5 animate-pulse"></span>
-          ÖBB
-        </span>
-        <span class="inline-flex items-center px-2.5 py-1 rounded-full bg-sky-950/60 border border-sky-800/60 text-sky-300 font-semibold shadow-sm">
-          <span class="w-2 h-2 rounded-full bg-sky-400 mr-1.5 animate-pulse"></span>
-          WESTbahn
-        </span>
+      <!-- Live Date and Time Display in pure green -->
+      <div class="flex items-center">
+        <span id="liveClock" class="font-mono text-xs sm:text-sm font-semibold tracking-wide text-[#00ff00]"></span>
       </div>
     </div>
   </header>
@@ -90,33 +83,29 @@
 
     <!-- Quick-Select Stations Chips -->
     <section class="space-y-2">
-        <div class="flex items-center text-xs font-semibold text-slate-400 uppercase tracking-wider">
-          <i data-lucide="zap" class="w-3.5 h-3.5 text-amber-400 mr-1.5"></i>
-          Schnellwahl / Beliebte Bahnhöfe
-        </div>
-        <div class="flex flex-wrap gap-2" id="quickStationChips">
-          <button type="button" class="quick-chip" data-id="8103000" data-name="Wien Hauptbahnhof">
-            <i data-lucide="map-pin" class="w-3.5 h-3.5 text-rose-400 mr-1"></i> Wien Hbf
-          </button>
-          <button type="button" class="quick-chip" data-id="8100003" data-name="Wien Westbahnhof">
-            <i data-lucide="map-pin" class="w-3.5 h-3.5 text-sky-400 mr-1"></i> Wien Westbahnhof
-          </button>
-          <button type="button" class="quick-chip" data-id="1293001" data-name="Flughafen Wien">
-            <i data-lucide="plane" class="w-3.5 h-3.5 text-emerald-400 mr-1"></i> Flughafen Wien
-          </button>
-          <button type="button" class="quick-chip" data-id="8100013" data-name="Linz/Donau Hbf">
-            <i data-lucide="map-pin" class="w-3.5 h-3.5 text-amber-400 mr-1"></i> Linz Hbf
-          </button>
-          <button type="button" class="quick-chip" data-id="8100002" data-name="Salzburg Hbf">
-            <i data-lucide="map-pin" class="w-3.5 h-3.5 text-purple-400 mr-1"></i> Salzburg Hbf
-          </button>
-          <button type="button" class="quick-chip" data-id="8100008" data-name="St.Pölten Hbf">
-            <i data-lucide="map-pin" class="w-3.5 h-3.5 text-slate-400 mr-1"></i> St. Pölten Hbf
-          </button>
-          <button type="button" class="quick-chip" data-id="8100015" data-name="Wels Hbf">
-            <i data-lucide="map-pin" class="w-3.5 h-3.5 text-slate-400 mr-1"></i> Wels Hbf
-          </button>
-        </div>
+      <div class="flex items-center text-xs font-semibold text-slate-400 uppercase tracking-wider">
+        <i data-lucide="zap" class="w-3.5 h-3.5 text-amber-400 mr-1.5"></i>
+        Schnellwahl
+      </div>
+      <div class="flex flex-wrap gap-2" id="quickStationChips">
+        <button type="button" class="quick-chip" data-id="1293001" data-name="Flughafen Wien">
+          <i data-lucide="plane" class="w-3.5 h-3.5 text-emerald-400 mr-1"></i> Flughafen Wien
+        </button>
+        <button type="button" class="quick-chip" data-id="8103000" data-name="Wien Hauptbahnhof">
+          <i data-lucide="map-pin" class="w-3.5 h-3.5 text-rose-400 mr-1"></i> Wien Hbf
+        </button>
+        <button type="button" class="quick-chip" data-id="8100003" data-name="Wien Westbahnhof">
+          <i data-lucide="map-pin" class="w-3.5 h-3.5 text-sky-400 mr-1"></i> Wien West
+        </button>
+        <button type="button" class="quick-chip" data-id="8100013" data-name="Linz/Donau Hbf">
+          <i data-lucide="map-pin" class="w-3.5 h-3.5 text-amber-400 mr-1"></i> Linz
+        </button>
+        <button type="button" class="quick-chip" data-id="8100002" data-name="Salzburg Hbf">
+          <i data-lucide="map-pin" class="w-3.5 h-3.5 text-purple-400 mr-1"></i> Salzburg
+        </button>
+        <button type="button" class="quick-chip" data-id="8100027" data-name="Innsbruck Hbf">
+          <i data-lucide="map-pin" class="w-3.5 h-3.5 text-cyan-400 mr-1"></i> Innsbruck
+        </button>
       </div>
     </section>
 
@@ -142,7 +131,7 @@
                 autocomplete="off"
                 required
               >
-              <input type="hidden" id="originId" value="8100003">
+              <input type="hidden" id="originId" value="">
               <button type="button" id="clearOriginBtn" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 hidden">
                 <i data-lucide="x" class="w-4 h-4"></i>
               </button>
@@ -178,7 +167,7 @@
                 autocomplete="off"
                 required
               >
-              <input type="hidden" id="destinationId" value="8100002">
+              <input type="hidden" id="destinationId" value="">
               <button type="button" id="clearDestinationBtn" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 hidden">
                 <i data-lucide="x" class="w-4 h-4"></i>
               </button>
@@ -245,7 +234,7 @@
             <button
               type="submit"
               id="submitBtn"
-              class="w-full py-2.5 px-5 bg-gradient-to-r from-rose-600 via-rose-500 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-semibold rounded-xl shadow-lg shadow-rose-900/40 hover:shadow-rose-900/60 active:scale-[0.98] transition-all flex items-center justify-center space-x-2"
+              class="w-full py-2.5 px-5 btn-search-submit text-white font-normal rounded-xl active:scale-[0.98] transition-all flex items-center justify-center space-x-2 cursor-pointer"
             >
               <i data-lucide="search" class="w-4 h-4"></i>
               <span>Verbindungen suchen</span>
@@ -357,7 +346,7 @@
   <footer class="border-t border-slate-800/80 bg-slate-950 py-6 text-xs text-slate-500 mt-12">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
       <div class="flex items-center space-x-2">
-        <span>FahrplanAT &bull; Kombinierte Fahrplanauskunft für Österreich</span>
+        <span>Fahrpläne EU &bull; Zugfahrpläne Europas</span>
       </div>
       <div class="flex items-center space-x-4">
         <span>Fokus: Weststrecke &amp; Flughafen Wien</span>
@@ -370,6 +359,6 @@
   </footer>
 
   <!-- Main JavaScript App -->
-  <script src="app.js?v=1.3.12"></script>
+  <script src="app.js?v=1.4.0"></script>
 </body>
 </html>
