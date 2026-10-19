@@ -781,7 +781,7 @@ const SearchController = {
     }
   },
 
-  async performSearch(paginationOptions = {}) {
+  async performSearch(paginationOptions = {}, isRetry = false) {
     const origin = DOM.originId.value || DOM.originInput.value.trim();
     const destination = DOM.destinationId.value || DOM.destinationInput.value.trim();
 
@@ -790,18 +790,20 @@ const SearchController = {
       return;
     }
 
-    if (AppState.abortController) {
-      AppState.abortController.abort();
+    if (!isRetry) {
+      if (AppState.abortController) {
+        AppState.abortController.abort();
+      }
+      AppState.abortController = new AbortController();
+
+      this.setLoading(true);
+
+      // Update Route Overview Banner
+      DOM.bannerOrigin.textContent = DOM.originInput.value.trim() || 'Start';
+      DOM.bannerDestination.textContent = DOM.destinationInput.value.trim() || 'Ziel';
+      DOM.bannerDate.textContent = Formatters.formatDateLabel(DOM.dateInput.value);
+      DOM.routeBanner.classList.remove('hidden');
     }
-    AppState.abortController = new AbortController();
-
-    this.setLoading(true);
-
-    // Update Route Overview Banner
-    DOM.bannerOrigin.textContent = DOM.originInput.value.trim() || 'Start';
-    DOM.bannerDestination.textContent = DOM.destinationInput.value.trim() || 'Ziel';
-    DOM.bannerDate.textContent = Formatters.formatDateLabel(DOM.dateInput.value);
-    DOM.routeBanner.classList.remove('hidden');
 
     const params = new URLSearchParams({
       origin,
@@ -816,13 +818,41 @@ const SearchController = {
     if (paginationOptions.earlierRef) params.append('earlierRef', paginationOptions.earlierRef);
     if (paginationOptions.laterRef) params.append('laterRef', paginationOptions.laterRef);
 
+    let willRetry = false;
+
     try {
-      const response = await fetch(`/api/fahrplan?${params.toString()}`, {
-        signal: AppState.abortController.signal
-      });
+      // Setup fetch with client timeout (28s, allowing 26s backend execution + network transit)
+      const fetchController = new AbortController();
+      const timeoutTimer = setTimeout(() => {
+        fetchController.abort();
+      }, 28000);
+
+      // Propagate user cancellation to the fetchController
+      const onUserAbort = () => fetchController.abort();
+      AppState.abortController?.signal.addEventListener('abort', onUserAbort);
+
+      let response;
+      try {
+        response = await fetch(`/api/fahrplan?${params.toString()}`, {
+          signal: fetchController.signal
+        });
+      } finally {
+        clearTimeout(timeoutTimer);
+        AppState.abortController?.signal.removeEventListener('abort', onUserAbort);
+      }
+
+      if (!response.ok) {
+        let errMsg = `Serverfehler (${response.status})`;
+        try {
+          const errData = await response.json();
+          if (errData && errData.error) errMsg = errData.error;
+        } catch (_) {}
+        throw new Error(errMsg);
+      }
+
       const data = await response.json();
 
-      if (!response.ok || !data.success) {
+      if (!data.success) {
         throw new Error(data.error || 'Fehler beim Laden des Fahrplans.');
       }
 
@@ -832,15 +862,31 @@ const SearchController = {
       this.renderResults(AppState.journeys);
       this.updatePaginationControls();
     } catch (err) {
-      if (err.name === 'AbortError') {
+      // If manually cancelled by user, stop immediately
+      if (AppState.abortController?.signal.aborted) {
         console.log('Search cancelled by user.');
         return;
       }
-      console.error('Search error:', err);
-      this.showError(err.message);
+
+      // Automatic single retry if query failed or timed out
+      if (!isRetry) {
+        willRetry = true;
+        console.warn('Erste Fahrplanabfrage fehlgeschlagen/Timeout. Starte automatischen 2. Versuch...', err);
+        if (DOM.loadingText) {
+          DOM.loadingText.textContent = 'Verbindung verzögert – 2. Versuch wird gestartet...';
+        }
+        await new Promise(resolve => setTimeout(resolve, 800));
+        if (AppState.abortController?.signal.aborted) return;
+        return await this.performSearch(paginationOptions, true);
+      }
+
+      console.error('Search error after retry:', err);
+      this.showError(err.message || 'Die Fahrplanabfrage konnte auch nach erneutem Versuch nicht abgeschlossen werden.');
     } finally {
-      AppState.abortController = null;
-      this.setLoading(false);
+      if (!willRetry) {
+        AppState.abortController = null;
+        this.setLoading(false);
+      }
     }
   }
 };

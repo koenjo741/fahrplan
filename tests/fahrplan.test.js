@@ -156,7 +156,12 @@ async function runTests() {
   }
   console.log('Verified: Station names are completely stripped of (Bahnsteige...) brackets.');
 
-  console.log('\n🎉 ALL 8 TESTS PASSED SUCCESSFULLY! ✅');
+  // Test 9: Verify isPartial flag in response payload
+  console.log('Test 9: Testing partial results response flag...');
+  assert(typeof fpData2.isPartial === 'boolean', 'Response must include isPartial boolean flag');
+  console.log(`Verified: isPartial flag is present (${fpData2.isPartial}).`);
+
+  console.log('\n🎉 ALL 9 TESTS PASSED SUCCESSFULLY! ✅');
 }
 
 runTests().catch(err => {

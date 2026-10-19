@@ -56,6 +56,21 @@ function parseViennaDateTime(dateStr, timeStr) {
 }
 
 /**
+ * Helper to enforce hard timeout limits on async promises.
+ * @param {Promise} promise
+ * @param {number} ms
+ * @param {string} desc
+ * @returns {Promise}
+ */
+function withTimeout(promise, ms, desc = 'Anfrage') {
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${desc} überschritt Zeitlimit von ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
+}
+
+/**
  * Resolve input to a valid station ID or stop object.
  * If already an ID, returns it. If text, searches HAFAS.
  * @param {string} stationInput
@@ -70,13 +85,17 @@ async function resolveStation(stationInput) {
     return { id: trimmed, name: trimmed };
   }
 
-  // Lookup station by name
-  const results = await hafas.locations(trimmed, {
-    results: 3,
-    stops: true,
-    addresses: false,
-    poi: false
-  });
+  // Lookup station by name with 7s timeout
+  const results = await withTimeout(
+    hafas.locations(trimmed, {
+      results: 3,
+      stops: true,
+      addresses: false,
+      poi: false
+    }),
+    7000,
+    `Bahnhofssuche "${trimmed}"`
+  );
 
   if (!results || results.length === 0) {
     throw new Error(`Bahnhof "${trimmed}" konnte nicht gefunden werden.`);
@@ -237,6 +256,7 @@ async function fetchTimeWindowJourneys(originStation, destinationStation, startT
   const rawJourneys = [];
   let paginationEarlierRef = null;
   let paginationLaterRef = null;
+  let isPartial = false;
 
   if (earlierRef || laterRef) {
     // Single-batch pagination request
@@ -249,7 +269,11 @@ async function fetchTimeWindowJourneys(originStation, destinationStation, startT
     if (earlierRef) queryOptions.earlierThan = earlierRef;
     if (laterRef) queryOptions.laterThan = laterRef;
 
-    const res = await hafas.journeys(originStation.id, destinationStation.id, queryOptions);
+    const res = await withTimeout(
+      hafas.journeys(originStation.id, destinationStation.id, queryOptions),
+      15000,
+      'HAFAS Pagination'
+    );
     if (res.journeys) rawJourneys.push(...res.journeys);
     paginationEarlierRef = res.earlierRef || null;
     paginationLaterRef = res.laterRef || null;
@@ -258,8 +282,17 @@ async function fetchTimeWindowJourneys(originStation, destinationStation, startT
     let currentLaterRef = null;
     let iterations = 0;
     const MAX_ITERATIONS = 6;
+    const FUNCTION_DEADLINE_MS = 22000; // 22 seconds limit within the 26s Netlify timeout
+    const fetchStartTime = Date.now();
 
     while (iterations < MAX_ITERATIONS) {
+      // Check if we are approaching the function execution limit
+      if (iterations > 0 && (Date.now() - fetchStartTime) > FUNCTION_DEADLINE_MS) {
+        console.warn(`[Timeout-Schutz] Zeitgrenze (${Date.now() - fetchStartTime}ms) erreicht. Liefere ${rawJourneys.length} Teil-Verbindungen.`);
+        isPartial = true;
+        break;
+      }
+
       iterations++;
       const queryOptions = {
         results: 10,
@@ -274,32 +307,51 @@ async function fetchTimeWindowJourneys(originStation, destinationStation, startT
         queryOptions.departure = startTime;
       }
 
-      const res = await hafas.journeys(originStation.id, destinationStation.id, queryOptions);
-      if (!paginationEarlierRef && res.earlierRef) {
-        paginationEarlierRef = res.earlierRef;
+      try {
+        // Individual batch timeout: 9 seconds
+        const res = await withTimeout(
+          hafas.journeys(originStation.id, destinationStation.id, queryOptions),
+          9000,
+          `HAFAS Batch ${iterations}`
+        );
+
+        if (!paginationEarlierRef && res.earlierRef) {
+          paginationEarlierRef = res.earlierRef;
+        }
+
+        const batch = res.journeys || [];
+        if (batch.length === 0) break;
+
+        rawJourneys.push(...batch);
+        paginationLaterRef = res.laterRef || null;
+
+        const lastLeg = batch[batch.length - 1]?.legs?.[0];
+        const lastDep = lastLeg ? new Date(lastLeg.departure) : null;
+
+        // Stop once we have reached or passed the end of the time window
+        if (!res.laterRef || (lastDep && lastDep >= endTime)) {
+          break;
+        }
+        currentLaterRef = res.laterRef;
+      } catch (err) {
+        console.warn(`[HAFAS Batch ${iterations} Warnung]: ${err.message}`);
+        // Possibility 2: Partial Results on timeout or upstream error!
+        if (rawJourneys.length > 0) {
+          console.info(`[Partial Results] Liefere ${rawJourneys.length} bereits gefundene Verbindungen aus.`);
+          isPartial = true;
+          break;
+        }
+        // If not even the first batch could be fetched, rethrow so retry mechanism can engage
+        throw err;
       }
-
-      const batch = res.journeys || [];
-      if (batch.length === 0) break;
-
-      rawJourneys.push(...batch);
-      paginationLaterRef = res.laterRef || null;
-
-      const lastLeg = batch[batch.length - 1]?.legs?.[0];
-      const lastDep = lastLeg ? new Date(lastLeg.departure) : null;
-
-      // Stop once we have reached or passed the end of the time window
-      if (!res.laterRef || (lastDep && lastDep >= endTime)) {
-        break;
-      }
-      currentLaterRef = res.laterRef;
     }
   }
 
   return {
     rawJourneys,
     earlierRef: paginationEarlierRef,
-    laterRef: paginationLaterRef
+    laterRef: paginationLaterRef,
+    isPartial
   };
 }
 
@@ -399,7 +451,7 @@ exports.handler = async (event) => {
     const endTime = new Date(startTime.getTime() + windowHours * 60 * 60 * 1000);
 
     // 3. Query journeys from HAFAS
-    const { rawJourneys, earlierRef: paginationEarlierRef, laterRef: paginationLaterRef } =
+    const { rawJourneys, earlierRef: paginationEarlierRef, laterRef: paginationLaterRef, isPartial } =
       await fetchTimeWindowJourneys(originStation, destinationStation, startTime, endTime, earlierRef, laterRef);
 
     // 4. Transform, deduplicate and filter
@@ -432,6 +484,7 @@ exports.handler = async (event) => {
         laterRef: paginationLaterRef
       },
       count: journeys.length,
+      isPartial: !!isPartial,
       journeys
     });
   } catch (err) {
