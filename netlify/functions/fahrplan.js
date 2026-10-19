@@ -84,8 +84,22 @@ async function resolveStation(stationInput) {
 
   return {
     id: results[0].id,
-    name: results[0].name
+    name: cleanStationName(results[0].name)
   };
+}
+
+/**
+ * Remove parenthetical platform noise and internal suffixes from station names.
+ * @param {string} rawName
+ * @returns {string} Cleaned station name
+ */
+function cleanStationName(rawName = '') {
+  if (!rawName) return '';
+  return rawName
+    .replace(/\s*\(Bahnsteig[^)]*\)/gi, '')
+    .replace(/\s*\(U\)$/i, '')
+    .replace(/\s*Bahnhst$/i, '')
+    .trim();
 }
 
 /**
@@ -103,7 +117,7 @@ function enrichLeg(leg) {
 
   // Intermediate stops
   const stopovers = (leg.stopovers || []).map(s => ({
-    name: s.stop?.name || 'Unbekannter Halt',
+    name: cleanStationName(s.stop?.name || 'Unbekannter Halt'),
     arrival: s.arrival,
     plannedArrival: s.plannedArrival,
     departure: s.departure,
@@ -129,12 +143,12 @@ function enrichLeg(leg) {
       adminCode: leg.line.adminCode || ''
     } : null,
     origin: {
-      name: leg.origin?.name || '',
+      name: cleanStationName(leg.origin?.name || ''),
       id: leg.origin?.id || '',
       platform: leg.plannedPlatform || leg.platform || null
     },
     destination: {
-      name: leg.destination?.name || '',
+      name: cleanStationName(leg.destination?.name || ''),
       id: leg.destination?.id || '',
       platform: leg.plannedArrivalPlatform || leg.arrivalPlatform || null
     },
@@ -201,8 +215,8 @@ function formatJourney(j, idx, originStation, destinationStation) {
     carrierSummary,
     departureDelay: depDelay,
     arrivalDelay: arrDelay,
-    originName: firstLeg.origin?.name || originStation.name,
-    destinationName: lastLeg.destination?.name || destinationStation.name,
+    originName: cleanStationName(firstLeg.origin?.name || originStation.name),
+    destinationName: cleanStationName(lastLeg.destination?.name || destinationStation.name),
     departurePlatform: firstLeg.plannedPlatform || firstLeg.platform || null,
     arrivalPlatform: lastLeg.plannedArrivalPlatform || lastLeg.arrivalPlatform || null,
     legs: enrichedLegs

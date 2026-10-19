@@ -98,14 +98,23 @@ const Formatters = {
   },
 
   /**
+   * Clean station names from parenthetical platform noise like (Bahnsteige 3-12).
+   */
+  cleanStationName(name) {
+    if (!name) return '';
+    return name
+      .replace(/\s*\(Bahnsteig[^)]*\)/gi, '')
+      .replace(/\s*\(U\)/gi, '')
+      .replace(/\s*Bahnhst/gi, '')
+      .trim();
+  },
+
+  /**
    * Shorten Austrian station names for clean, responsive displays.
    */
   shortenStation(name) {
     if (!name) return '';
-    return name
-      .replace(/\s*\(Bahnsteige[^)]*\)/gi, '')
-      .replace(/\s*\(U\)/gi, '')
-      .replace(/\s*Bahnhst/gi, '')
+    return this.cleanStationName(name)
       .replace(/Linz\/Donau/gi, 'Linz')
       .replace(/Wien Westbahnhof/gi, 'Wien West')
       .replace(/Wien Hauptbahnhof/gi, 'Wien Hbf')
@@ -275,17 +284,19 @@ const Autocomplete = {
   renderDropdown(stations, dropdownEl, inputEl, idEl, clearBtn) {
     dropdownEl.innerHTML = '';
     stations.forEach((st) => {
+      const cleanName = Formatters.cleanStationName(st.name);
+      const cleanShort = Formatters.cleanStationName(st.shortName || '');
       const li = document.createElement('li');
       li.innerHTML = `
         <div class="flex items-center space-x-2">
           <i data-lucide="${st.isPopular ? 'star' : 'map-pin'}" class="w-3.5 h-3.5 ${st.isPopular ? 'text-amber-400' : 'text-slate-400'}"></i>
-          <span class="font-medium">${Formatters.escapeHtml(st.name)}</span>
+          <span class="font-medium">${Formatters.escapeHtml(cleanName)}</span>
         </div>
-        <span class="text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded font-mono">${st.shortName || ''}</span>
+        <span class="text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded font-mono">${cleanShort}</span>
       `;
 
       li.addEventListener('click', () => {
-        inputEl.value = st.name;
+        inputEl.value = cleanName;
         idEl.value = st.id;
         clearBtn.classList.remove('hidden');
         dropdownEl.classList.add('hidden');
@@ -376,7 +387,7 @@ const CardRenderer = {
 
           <!-- Center: Fahrtdauer -->
           <div class="text-center">
-            <span class="inline-block text-[11px] font-bold text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded-md tracking-tight">${Formatters.formatDurationShort(journey.durationMinutes)}</span>
+            <span class="inline-block text-[11px] font-medium text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded-md tracking-tight">${Formatters.formatDurationShort(journey.durationMinutes)}</span>
           </div>
 
           <!-- Right: Carrier Badge Pill -->
@@ -422,8 +433,8 @@ const CardRenderer = {
               <span class="font-display text-2xl sm:text-3xl font-medium text-white tracking-tight">${depTime}</span>
               ${depDelayHtml}
             </div>
-            <div class="text-sm font-semibold text-slate-200 truncate" title="${Formatters.escapeHtml(journey.originName)}">
-              ${Formatters.escapeHtml(journey.originName)}
+            <div class="text-sm font-semibold text-slate-200 truncate" title="${Formatters.escapeHtml(Formatters.cleanStationName(journey.originName))}">
+              ${Formatters.escapeHtml(Formatters.cleanStationName(journey.originName))}
             </div>
             ${journey.departurePlatform ? `<div class="text-xs text-slate-400 font-medium"><i data-lucide="signpost" class="inline w-3 h-3 mr-1 text-slate-400"></i> Bahnsteig ${Formatters.escapeHtml(journey.departurePlatform)}</div>` : ''}
           </div>
@@ -435,19 +446,18 @@ const CardRenderer = {
               class="duration-toggle-btn group flex flex-col items-center justify-center px-3.5 py-1.5 rounded-xl hover:bg-slate-800/80 active:scale-95 border border-transparent hover:border-slate-700/80 transition-all cursor-pointer"
               title="Klicken für Fahrtverlauf &amp; Details"
             >
-              <div class="text-xs font-bold text-slate-300 group-hover:text-rose-400 tracking-wider flex items-center transition-colors">
-                <i data-lucide="clock" class="w-3.5 h-3.5 mr-1 text-slate-400 group-hover:text-rose-400 transition-colors"></i>
+              <div class="text-xs font-medium text-slate-300 group-hover:text-slate-200 tracking-wider flex items-center transition-colors">
+                <i data-lucide="clock" class="w-3.5 h-3.5 mr-1 text-slate-400 group-hover:text-slate-300 transition-colors"></i>
                 <span>${journey.durationFormatted}</span>
-                <i data-lucide="chevron-down" class="duration-chevron w-3.5 h-3.5 ml-1 text-slate-500 group-hover:text-rose-400 transition-transform duration-200"></i>
+                <i data-lucide="chevron-down" class="duration-chevron w-3.5 h-3.5 ml-1 text-slate-500 group-hover:text-slate-300 transition-transform duration-200"></i>
               </div>
               <div class="w-20 sm:w-28 h-0.5 bg-gradient-to-r from-rose-500 via-amber-400 to-sky-400 my-1.5 relative">
                 <div class="w-2 h-2 rounded-full bg-slate-900 border-2 border-rose-500 absolute -top-0.5 left-0"></div>
                 <div class="w-2 h-2 rounded-full bg-slate-900 border-2 border-sky-400 absolute -top-0.5 right-0"></div>
               </div>
               <div class="text-[11px] text-slate-400 group-hover:text-slate-300 transition-colors font-medium flex items-center space-x-1">
-                <span>${journey.isDirect ? 'Direkt' : `${journey.transfers} Umst.`}</span>
-                <span class="text-slate-600">•</span>
-                <span class="text-rose-400/90 font-medium group-hover:underline">Details</span>
+                ${journey.isDirect ? '' : `<span>${journey.transfers} Umst.</span><span class="text-slate-600">•</span>`}
+                <span class="group-hover:underline">Details</span>
               </div>
             </button>
           </div>
@@ -457,8 +467,8 @@ const CardRenderer = {
             <div class="flex items-baseline space-x-2 sm:justify-end">
               <span class="font-display text-2xl sm:text-3xl font-medium text-white tracking-tight">${arrTime}</span>
             </div>
-            <div class="text-sm font-semibold text-slate-200 truncate" title="${Formatters.escapeHtml(journey.destinationName)}">
-              ${Formatters.escapeHtml(journey.destinationName)}
+            <div class="text-sm font-semibold text-slate-200 truncate" title="${Formatters.escapeHtml(Formatters.cleanStationName(journey.destinationName))}">
+              ${Formatters.escapeHtml(Formatters.cleanStationName(journey.destinationName))}
             </div>
             ${journey.arrivalPlatform ? `<div class="text-xs text-slate-400 font-medium"><i data-lucide="signpost" class="inline w-3 h-3 mr-1 text-slate-400"></i> Bahnsteig ${Formatters.escapeHtml(journey.arrivalPlatform)}</div>` : ''}
           </div>
@@ -609,7 +619,7 @@ const CardRenderer = {
             <div class="space-y-0.5">
               <div class="flex items-center space-x-2">
                 <span class="font-bold text-slate-200 text-sm">${depTime}</span>
-                <span class="font-medium text-slate-300">${Formatters.escapeHtml(leg.origin?.name || '')}</span>
+                <span class="font-medium text-slate-300">${Formatters.escapeHtml(Formatters.cleanStationName(leg.origin?.name || ''))}</span>
               </div>
               ${leg.origin?.platform ? `<div class="text-[11px] text-slate-400">Bahnsteig ${Formatters.escapeHtml(leg.origin.platform)}</div>` : ''}
             </div>
@@ -626,7 +636,7 @@ const CardRenderer = {
               <div class="stopovers-list hidden mt-2 pl-3 border-l border-slate-800 space-y-1.5 text-[11px] text-slate-400">
                 ${leg.stopovers.map(s => `
                   <div class="flex items-center justify-between">
-                    <span>${Formatters.escapeHtml(s.name)}</span>
+                    <span>${Formatters.escapeHtml(Formatters.cleanStationName(s.name))}</span>
                     <span class="font-mono">${Formatters.formatTimeOnly(s.arrival || s.departure)}</span>
                   </div>
                 `).join('')}
@@ -639,7 +649,7 @@ const CardRenderer = {
             <div class="space-y-0.5">
               <div class="flex items-center space-x-2">
                 <span class="font-bold text-slate-200 text-sm">${arrTime}</span>
-                <span class="font-medium text-slate-300">${Formatters.escapeHtml(leg.destination?.name || '')}</span>
+                <span class="font-medium text-slate-300">${Formatters.escapeHtml(Formatters.cleanStationName(leg.destination?.name || ''))}</span>
               </div>
               ${leg.destination?.platform ? `<div class="text-[11px] text-slate-400">Bahnsteig ${Formatters.escapeHtml(leg.destination.platform)}</div>` : ''}
             </div>

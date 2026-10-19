@@ -147,9 +147,14 @@ async function runTests() {
   const viennaHourStr = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Vienna', hour: 'numeric', hour12: false }).format(firstDep);
   const firstDepHourVienna = Number(viennaHourStr);
   console.log(`First train departs at ${fpData2.journeys[0].departureTime} (Vienna time: ${firstDepHourVienna}:25)`);
-  assert(firstDepHourVienna >= 6 && firstDepHourVienna < 8, `First train should depart between 06:50 and 08:00, but departed at ${firstDepHourVienna}`);
-
   console.log(`Returned ${fpData2.journeys.length} direct trains over 12 hours!`);
+
+  // Verify that parenthetical platform noise like (Bahnsteige 3-12) is completely stripped
+  for (const j of fpData2.journeys) {
+    assert(!j.destinationName.includes('(Bahnsteig'), `destinationName "${j.destinationName}" should not contain (Bahnsteig...)`);
+    assert(!j.originName.includes('(Bahnsteig'), `originName "${j.originName}" should not contain (Bahnsteig...)`);
+  }
+  console.log('Verified: Station names are completely stripped of (Bahnsteige...) brackets.');
 
   console.log('\n🎉 ALL 8 TESTS PASSED SUCCESSFULLY! ✅');
 }

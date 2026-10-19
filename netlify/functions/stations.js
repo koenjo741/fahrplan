@@ -36,14 +36,29 @@ function filterPresetStations(qLower) {
 }
 
 /**
+ * Clean raw HAFAS location name to remove internal/platform brackets like (Bahnsteige 3-12).
+ * @param {string} rawName
+ * @returns {string} Cleaned station name
+ */
+function cleanStationName(rawName = '') {
+  if (!rawName) return '';
+  return rawName
+    .replace(/\s*\(Bahnsteig[^)]*\)/gi, '')
+    .replace(/\s*\(U\)$/i, '')
+    .replace(/\s*Bahnhst$/i, '')
+    .trim();
+}
+
+/**
  * Clean raw HAFAS location name into short display format.
  * @param {string} rawName
  * @returns {string} Cleaned short name
  */
 function cleanStationShortName(rawName = '') {
-  return rawName
-    .replace(/\s*\(U\)$/i, '')
-    .replace(/\s*Bahnhst$/i, '')
+  return cleanStationName(rawName)
+    .replace(/Linz\/Donau/gi, 'Linz')
+    .replace(/Wien Westbahnhof/gi, 'Wien West')
+    .replace(/Wien Hauptbahnhof/gi, 'Wien Hbf')
     .trim();
 }
 
@@ -86,7 +101,7 @@ exports.handler = async (event) => {
       seenIds.add(p.id);
       stations.push({
         id: p.id,
-        name: p.name,
+        name: cleanStationName(p.name),
         shortName: p.shortName,
         isPopular: true
       });
@@ -98,7 +113,7 @@ exports.handler = async (event) => {
         seenIds.add(loc.id);
         stations.push({
           id: loc.id,
-          name: loc.name,
+          name: cleanStationName(loc.name),
           shortName: cleanStationShortName(loc.name),
           isPopular: false,
           location: loc.location ? { lat: loc.location.latitude, lon: loc.location.longitude } : null
