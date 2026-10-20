@@ -7,6 +7,10 @@ const {
   formatDelay
 } = require('./utils/carrierHelper');
 const { handleCorsPreflight, jsonResponse } = require('./utils/httpHelper');
+const {
+  PRESET_STATIONS,
+  cleanStationName
+} = require('./utils/stationHelper');
 
 const hafas = createClient(oebbProfile, 'oebb-westbahn-fahrplan-v1');
 
@@ -80,15 +84,36 @@ async function resolveStation(stationInput) {
   if (!stationInput) return null;
   const trimmed = stationInput.trim();
 
-  // If purely numeric ID (e.g. 8100003, 1293001), use directly
+  // If purely numeric ID (e.g. 8100003, 1293001), check presets or lookup name
   if (/^\d+$/.test(trimmed)) {
+    const preset = PRESET_STATIONS.find(s => s.id === trimmed);
+    if (preset) {
+      return { id: trimmed, name: cleanStationName(preset.name) };
+    }
+    try {
+      const stopInfo = await withTimeout(hafas.stop(trimmed), 3000, `Stop-Lookup ${trimmed}`);
+      if (stopInfo?.name) {
+        return { id: trimmed, name: cleanStationName(stopInfo.name) };
+      }
+    } catch (_) {}
     return { id: trimmed, name: trimmed };
+  }
+
+  // Check presets by exact name, shortName or code first for instant & reliable resolution
+  const qLower = trimmed.toLowerCase();
+  const directPreset = PRESET_STATIONS.find(s =>
+    s.name.toLowerCase() === qLower ||
+    s.shortName.toLowerCase() === qLower ||
+    (s.code && s.code.toLowerCase() === qLower)
+  );
+  if (directPreset) {
+    return { id: directPreset.id, name: cleanStationName(directPreset.name) };
   }
 
   // Lookup station by name with 7s timeout
   const results = await withTimeout(
     hafas.locations(trimmed, {
-      results: 3,
+      results: 5,
       stops: true,
       addresses: false,
       poi: false
@@ -101,24 +126,14 @@ async function resolveStation(stationInput) {
     throw new Error(`Bahnhof "${trimmed}" konnte nicht gefunden werden.`);
   }
 
-  return {
-    id: results[0].id,
-    name: cleanStationName(results[0].name)
-  };
-}
+  // If one of the search results matches our preset stations, prioritize that verified station ID
+  const presetMatch = results.find(r => PRESET_STATIONS.some(p => p.id === r.id));
+  const chosen = presetMatch || results[0];
 
-/**
- * Remove parenthetical platform noise and internal suffixes from station names.
- * @param {string} rawName
- * @returns {string} Cleaned station name
- */
-function cleanStationName(rawName = '') {
-  if (!rawName) return '';
-  return rawName
-    .replace(/\s*\(Bahnsteig[^)]*\)/gi, '')
-    .replace(/\s*\(U\)$/i, '')
-    .replace(/\s*Bahnhst$/i, '')
-    .trim();
+  return {
+    id: chosen.id,
+    name: cleanStationName(chosen.name)
+  };
 }
 
 /**

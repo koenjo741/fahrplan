@@ -161,7 +161,69 @@ async function runTests() {
   assert(typeof fpData2.isPartial === 'boolean', 'Response must include isPartial boolean flag');
   console.log(`Verified: isPartial flag is present (${fpData2.isPartial}).`);
 
-  console.log('\n🎉 ALL 9 TESTS PASSED SUCCESSFULLY! ✅');
+  // Test 10: Verify preset station IDs in stationHelper
+  console.log('Test 10: Verifying preset station IDs in stationHelper...');
+  const { PRESET_STATIONS } = require('../netlify/functions/utils/stationHelper');
+  const innsbruckPreset = PRESET_STATIONS.find(s => s.shortName === 'Innsbruck Hbf');
+  assert.strictEqual(innsbruckPreset.id, '8100108', 'Innsbruck Hbf must have correct ID 8100108');
+
+  const welsPreset = PRESET_STATIONS.find(s => s.shortName === 'Wels Hbf');
+  assert.strictEqual(welsPreset.id, '8100014', 'Wels Hbf must have correct ID 8100014');
+
+  const grazPreset = PRESET_STATIONS.find(s => s.shortName === 'Graz Hbf');
+  assert.strictEqual(grazPreset.id, '8100173', 'Graz Hbf must have correct ID 8100173');
+
+  const amstettenPreset = PRESET_STATIONS.find(s => s.shortName === 'Amstetten');
+  assert.strictEqual(amstettenPreset.id, '1230501', 'Amstetten must have correct ID 1230501');
+
+  // Test 11: Regression test for user issue - Linz/Donau Hbf -> Innsbruck Hbf
+  console.log('Test 11: Testing Linz/Donau Hbf -> Innsbruck Hbf journey query (correct destination)...');
+  const innRes = await fahrplanHandler({
+    httpMethod: 'GET',
+    queryStringParameters: {
+      origin: '8100013', // Linz/Donau Hbf
+      destination: '8100108', // Innsbruck Hbf
+      date: '2026-10-20',
+      time: '17:05',
+      hours: '6'
+    }
+  });
+  assert.strictEqual(innRes.statusCode, 200);
+  const innData = JSON.parse(innRes.body);
+  assert.strictEqual(innData.success, true);
+  assert(innData.journeys.length > 0, 'Should return journeys from Linz to Innsbruck');
+  for (const j of innData.journeys) {
+    assert(
+      j.destinationName.toLowerCase().includes('innsbruck'),
+      `Destination must be Innsbruck Hbf, but was: "${j.destinationName}"`
+    );
+    assert(
+      !j.destinationName.toLowerCase().includes('payerbach'),
+      `Destination must NOT be Payerbach, but was: "${j.destinationName}"`
+    );
+  }
+  console.log(`Verified: All ${innData.journeys.length} journeys arrive at ${innData.journeys[0].destinationName}!`);
+
+  // Test 12: Resolution by station name without numeric ID
+  console.log('Test 12: Testing station resolution by textual names ("Linz/Donau Hbf" -> "Innsbruck Hbf")...');
+  const nameRes = await fahrplanHandler({
+    httpMethod: 'GET',
+    queryStringParameters: {
+      origin: 'Linz/Donau Hbf',
+      destination: 'Innsbruck Hbf',
+      date: '2026-10-20',
+      time: '17:05',
+      hours: '3'
+    }
+  });
+  assert.strictEqual(nameRes.statusCode, 200);
+  const nameData = JSON.parse(nameRes.body);
+  assert.strictEqual(nameData.success, true);
+  assert.strictEqual(nameData.query.origin.id, '8100013');
+  assert.strictEqual(nameData.query.destination.id, '8100108');
+  console.log('Verified: Stations resolved correctly from text inputs.');
+
+  console.log('\n🎉 ALL 12 TESTS PASSED SUCCESSFULLY! ✅');
 }
 
 runTests().catch(err => {

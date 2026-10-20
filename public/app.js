@@ -224,6 +224,7 @@ const Autocomplete = {
     // Clear input
     clearBtn.addEventListener('click', () => {
       inputEl.value = '';
+      inputEl.dataset.selectedName = '';
       idEl.value = '';
       clearBtn.classList.add('hidden');
       dropdownEl.classList.add('hidden');
@@ -233,11 +234,18 @@ const Autocomplete = {
     // Input changes
     inputEl.addEventListener('input', () => {
       const query = inputEl.value.trim();
+      // Invalidate station ID if user modified the text
+      if (inputEl.dataset.selectedName && inputEl.dataset.selectedName !== query) {
+        idEl.value = '';
+        inputEl.dataset.selectedName = '';
+      }
+
       if (query) {
         clearBtn.classList.remove('hidden');
       } else {
         clearBtn.classList.add('hidden');
         idEl.value = '';
+        inputEl.dataset.selectedName = '';
       }
 
       clearTimeout(debounceTimer);
@@ -297,6 +305,7 @@ const Autocomplete = {
 
       li.addEventListener('click', () => {
         inputEl.value = cleanName;
+        inputEl.dataset.selectedName = cleanName;
         idEl.value = st.id;
         clearBtn.classList.remove('hidden');
         dropdownEl.classList.add('hidden');
@@ -782,6 +791,16 @@ const SearchController = {
   },
 
   async performSearch(paginationOptions = {}, isRetry = false) {
+    // Invalidate ID if input text does not match the bound selectedName
+    if (DOM.originInput.dataset.selectedName && DOM.originInput.dataset.selectedName !== DOM.originInput.value.trim()) {
+      DOM.originId.value = '';
+      DOM.originInput.dataset.selectedName = '';
+    }
+    if (DOM.destinationInput.dataset.selectedName && DOM.destinationInput.dataset.selectedName !== DOM.destinationInput.value.trim()) {
+      DOM.destinationId.value = '';
+      DOM.destinationInput.dataset.selectedName = '';
+    }
+
     const origin = DOM.originId.value || DOM.originInput.value.trim();
     const destination = DOM.destinationId.value || DOM.destinationInput.value.trim();
 
@@ -971,13 +990,16 @@ function setupEventListeners() {
   // Station Swap button
   DOM.swapStationsBtn.addEventListener('click', () => {
     const tempName = DOM.originInput.value;
+    const tempSelectedName = DOM.originInput.dataset.selectedName || '';
     const tempId = DOM.originId.value;
 
     DOM.originInput.value = DOM.destinationInput.value;
+    DOM.originInput.dataset.selectedName = DOM.destinationInput.dataset.selectedName || '';
     DOM.originId.value = DOM.destinationId.value;
     AppState.origin = { id: DOM.originId.value, name: DOM.originInput.value };
 
     DOM.destinationInput.value = tempName;
+    DOM.destinationInput.dataset.selectedName = tempSelectedName;
     DOM.destinationId.value = tempId;
     AppState.destination = { id: DOM.destinationId.value, name: DOM.destinationInput.value };
 
@@ -1000,6 +1022,7 @@ function setupEventListeners() {
 
     if (!DOM.originInput.value.trim()) {
       DOM.originInput.value = name;
+      DOM.originInput.dataset.selectedName = name;
       DOM.originId.value = id;
       AppState.origin = { id, name };
       DOM.clearOriginBtn.classList.remove('hidden');
@@ -1008,20 +1031,23 @@ function setupEventListeners() {
       }
     } else if (!DOM.destinationInput.value.trim()) {
       DOM.destinationInput.value = name;
+      DOM.destinationInput.dataset.selectedName = name;
       DOM.destinationId.value = id;
       AppState.destination = { id, name };
       DOM.clearDestinationBtn.classList.remove('hidden');
       if (DOM.originInput.value.trim()) {
         SearchController.performSearch();
       }
-    } else if (DOM.destinationId.value === id) {
+    } else if (DOM.destinationId.value === id || DOM.destinationInput.value.trim() === name) {
       DOM.originInput.value = name;
+      DOM.originInput.dataset.selectedName = name;
       DOM.originId.value = id;
       AppState.origin = { id, name };
       DOM.clearOriginBtn.classList.remove('hidden');
       SearchController.performSearch();
     } else {
       DOM.destinationInput.value = name;
+      DOM.destinationInput.dataset.selectedName = name;
       DOM.destinationId.value = id;
       AppState.destination = { id, name };
       DOM.clearDestinationBtn.classList.remove('hidden');
