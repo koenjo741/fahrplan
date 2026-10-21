@@ -1,6 +1,7 @@
 /* Custom Styles & Design System for FahrplanAT */
 
 :root {
+  color-scheme: dark;
   --color-oebb: #193cb8;
   --color-oebb-dark: #122c88;
   --color-westbahn: #009FE3;
@@ -384,5 +385,65 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .clock-dot.active-minute {
   background-color: #155DFC;
   box-shadow: 0 0 8px #155DFC;
+}
+
+/* ==========================================
+ * Custom Dark Mode Calendar Modal (#155DFC Cobalt Blue)
+ * ========================================== */
+.date-picker-modal {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.date-picker-modal.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.date-picker-card {
+  transform: scale(0.92) translateY(8px);
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.date-picker-modal.open .date-picker-card {
+  transform: scale(1) translateY(0);
+}
+
+.calendar-day-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  font-weight: 500;
+  transition: all 0.15s ease;
+  cursor: pointer;
+  margin: auto;
+}
+
+.calendar-day-btn.selected {
+  background-color: #155DFC;
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 0 14px rgba(21, 93, 252, 0.65);
+  transform: scale(1.05);
+}
+
+.calendar-day-btn.today:not(.selected) {
+  border: 1px solid rgba(21, 93, 252, 0.6);
+  color: #93c5fd;
+  font-weight: 600;
+}
+
+.calendar-day-btn.other-month {
+  color: #475569;
+}
+
+.calendar-day-btn:not(.selected):not(.disabled):hover {
+  background-color: rgba(21, 93, 252, 0.2);
+  color: #bfdbfe;
+  transform: scale(1.08);
 }
 

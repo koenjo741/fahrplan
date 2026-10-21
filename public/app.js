@@ -162,6 +162,8 @@ const DOM = {
   clearDestinationBtn: document.getElementById('clearDestinationBtn'),
   swapStationsBtn: document.getElementById('swapStationsBtn'),
   dateInput: document.getElementById('dateInput'),
+  dateInputTrigger: document.getElementById('dateInputTrigger'),
+  dateDisplayInput: document.getElementById('dateDisplayInput'),
   timeInput: document.getElementById('timeInput'),
   timeInputTrigger: document.getElementById('timeInputTrigger'),
   setNowBtn: document.getElementById('setNowBtn'),
@@ -189,6 +191,15 @@ const DOM = {
   loadLaterBtn: document.getElementById('loadLaterBtn'),
   quickStationChips: document.getElementById('quickStationChips'),
   liveClock: document.getElementById('liveClock'),
+  datePickerModal: document.getElementById('datePickerModal'),
+  datePickerCard: document.getElementById('datePickerCard'),
+  datePickerBadge: document.getElementById('datePickerBadge'),
+  datePickerPrevMonthBtn: document.getElementById('datePickerPrevMonthBtn'),
+  datePickerNextMonthBtn: document.getElementById('datePickerNextMonthBtn'),
+  datePickerMonthYearLabel: document.getElementById('datePickerMonthYearLabel'),
+  datePickerDaysGrid: document.getElementById('datePickerDaysGrid'),
+  datePickerCancelBtn: document.getElementById('datePickerCancelBtn'),
+  datePickerConfirmBtn: document.getElementById('datePickerConfirmBtn'),
   timePickerModal: document.getElementById('timePickerModal'),
   timePickerCard: document.getElementById('timePickerCard'),
   clockModeLabel: document.getElementById('clockModeLabel'),
@@ -196,6 +207,7 @@ const DOM = {
   timePickerDayLabel: document.getElementById('timePickerDayLabel'),
   timePickerPrevDayBtn: document.getElementById('timePickerPrevDayBtn'),
   timePickerNextDayBtn: document.getElementById('timePickerNextDayBtn'),
+  timePickerDateClickable: document.getElementById('timePickerDateClickable'),
   timePickerHourBtn: document.getElementById('timePickerHourBtn'),
   timePickerMinuteBtn: document.getElementById('timePickerMinuteBtn'),
   clockFace: document.getElementById('clockFace'),
@@ -690,6 +702,295 @@ const CardRenderer = {
 };
 
 // ==========================================
+// 7.4. Custom Dark Mode Calendar Component (#155DFC Cobalt Blue)
+// ==========================================
+const CustomDatePicker = {
+  isOpen: false,
+  selectedDate: null,
+  viewYear: null,
+  viewMonth: null, // 0-indexed
+
+  init() {
+    if (!DOM.dateInputTrigger && !DOM.dateDisplayInput) return;
+
+    // Open on clicking trigger or input
+    DOM.dateInputTrigger?.addEventListener('click', (e) => {
+      e.preventDefault();
+      this.open();
+    });
+    DOM.dateDisplayInput?.addEventListener('click', (e) => {
+      e.preventDefault();
+      this.open();
+    });
+
+    // Also allow opening from the date badge inside CircularTimePicker
+    DOM.timePickerDateClickable?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.open();
+    });
+
+    // Modal controls
+    DOM.datePickerCancelBtn?.addEventListener('click', () => this.close());
+    DOM.datePickerConfirmBtn?.addEventListener('click', () => this.confirm());
+
+    // Backdrop click
+    DOM.datePickerModal?.addEventListener('click', (e) => {
+      if (e.target === DOM.datePickerModal) {
+        this.close();
+      }
+    });
+
+    // Month navigation
+    DOM.datePickerPrevMonthBtn?.addEventListener('click', () => this.changeMonth(-1));
+    DOM.datePickerNextMonthBtn?.addEventListener('click', () => this.changeMonth(1));
+
+    // Preset chips
+    DOM.datePickerCard?.querySelectorAll('.date-quick-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const action = btn.dataset.action;
+        this.handleQuickAction(action);
+      });
+    });
+
+    // Keyboard navigation
+    window.addEventListener('keydown', (e) => {
+      if (!this.isOpen) return;
+
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        this.close();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        this.confirm();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        this.adjustDate(-1);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        this.adjustDate(1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        this.adjustDate(-7);
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        this.adjustDate(7);
+      }
+    });
+  },
+
+  open() {
+    // Read current date from DOM.dateInput or default to today
+    const dateVal = DOM.dateInput?.value?.trim();
+    if (dateVal && /^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
+      const [y, m, d] = dateVal.split('-').map(Number);
+      this.selectedDate = new Date(y, m - 1, d);
+    } else {
+      this.selectedDate = new Date();
+    }
+
+    this.viewYear = this.selectedDate.getFullYear();
+    this.viewMonth = this.selectedDate.getMonth();
+
+    this.isOpen = true;
+    this.render();
+    DOM.datePickerModal?.classList.add('open');
+
+    if (window.lucide) lucide.createIcons();
+  },
+
+  close() {
+    this.isOpen = false;
+    DOM.datePickerModal?.classList.remove('open');
+  },
+
+  changeMonth(delta) {
+    this.viewMonth += delta;
+    if (this.viewMonth < 0) {
+      this.viewMonth = 11;
+      this.viewYear -= 1;
+    } else if (this.viewMonth > 11) {
+      this.viewMonth = 0;
+      this.viewYear += 1;
+    }
+    this.render();
+  },
+
+  adjustDate(deltaDays) {
+    if (!this.selectedDate) this.selectedDate = new Date();
+    this.selectedDate.setDate(this.selectedDate.getDate() + deltaDays);
+    this.viewYear = this.selectedDate.getFullYear();
+    this.viewMonth = this.selectedDate.getMonth();
+    this.render();
+  },
+
+  handleQuickAction(action) {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    if (action === 'today') {
+      this.selectedDate = today;
+    } else if (action === 'tomorrow') {
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      this.selectedDate = tomorrow;
+    } else if (action === 'dayAfter') {
+      const dayAfter = new Date(today);
+      dayAfter.setDate(dayAfter.getDate() + 2);
+      this.selectedDate = dayAfter;
+    } else if (action === 'weekend') {
+      const sat = new Date(today);
+      const dayOfWeek = sat.getDay();
+      const daysUntilSat = (6 - dayOfWeek + 7) % 7 || 7;
+      sat.setDate(sat.getDate() + daysUntilSat);
+      this.selectedDate = sat;
+    }
+
+    this.viewYear = this.selectedDate.getFullYear();
+    this.viewMonth = this.selectedDate.getMonth();
+    this.render();
+  },
+
+  render() {
+    if (!DOM.datePickerDaysGrid) return;
+
+    const pad = (n) => String(n).padStart(2, '0');
+    const months = [
+      'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+      'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'
+    ];
+    const weekdays = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+
+    if (DOM.datePickerMonthYearLabel) {
+      DOM.datePickerMonthYearLabel.textContent = `${months[this.viewMonth]} ${this.viewYear}`;
+    }
+
+    if (DOM.datePickerBadge && this.selectedDate) {
+      const d = this.selectedDate;
+      DOM.datePickerBadge.textContent = `${pad(d.getDate())}:${pad(d.getMonth() + 1)}:${d.getFullYear()} (${weekdays[d.getDay()]})`;
+    }
+
+    // Generate calendar grid cells (Monday-based)
+    DOM.datePickerDaysGrid.innerHTML = '';
+
+    const now = new Date();
+    const isTodayYear = now.getFullYear() === this.viewYear;
+    const isTodayMonth = now.getMonth() === this.viewMonth;
+    const todayDate = now.getDate();
+
+    const isSelYear = this.selectedDate && this.selectedDate.getFullYear() === this.viewYear;
+    const isSelMonth = this.selectedDate && this.selectedDate.getMonth() === this.viewMonth;
+    const selDate = this.selectedDate ? this.selectedDate.getDate() : -1;
+
+    // First day of current month
+    const firstDayObj = new Date(this.viewYear, this.viewMonth, 1);
+    const startDayIndex = (firstDayObj.getDay() + 6) % 7;
+
+    // Total days in current month
+    const daysInMonth = new Date(this.viewYear, this.viewMonth + 1, 0).getDate();
+
+    // Total days in previous month
+    const daysInPrevMonth = new Date(this.viewYear, this.viewMonth, 0).getDate();
+
+    // 1. Previous month trailing days
+    for (let i = startDayIndex - 1; i >= 0; i--) {
+      const dayNum = daysInPrevMonth - i;
+      const prevMonth = this.viewMonth === 0 ? 11 : this.viewMonth - 1;
+      const prevYear = this.viewMonth === 0 ? this.viewYear - 1 : this.viewYear;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'calendar-day-btn other-month text-[11px]';
+      btn.textContent = dayNum;
+      btn.addEventListener('click', () => {
+        this.selectedDate = new Date(prevYear, prevMonth, dayNum);
+        this.viewYear = prevYear;
+        this.viewMonth = prevMonth;
+        this.render();
+      });
+      DOM.datePickerDaysGrid.appendChild(btn);
+    }
+
+    // 2. Current month days
+    for (let d = 1; d <= daysInMonth; d++) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = d;
+
+      const isSelected = isSelYear && isSelMonth && d === selDate;
+      const isToday = isTodayYear && isTodayMonth && d === todayDate;
+
+      let cls = 'calendar-day-btn text-slate-200';
+      if (isSelected) {
+        cls += ' selected';
+      } else if (isToday) {
+        cls += ' today';
+      }
+      btn.className = cls;
+
+      btn.addEventListener('click', () => {
+        this.selectedDate = new Date(this.viewYear, this.viewMonth, d);
+        this.render();
+      });
+
+      // Double-click to instantly confirm
+      btn.addEventListener('dblclick', () => {
+        this.selectedDate = new Date(this.viewYear, this.viewMonth, d);
+        this.confirm();
+      });
+
+      DOM.datePickerDaysGrid.appendChild(btn);
+    }
+
+    // 3. Next month leading days
+    const filledCount = startDayIndex + daysInMonth;
+    const remainingCount = filledCount <= 35 ? 35 - filledCount : 42 - filledCount;
+    for (let d = 1; d <= remainingCount; d++) {
+      const nextMonth = this.viewMonth === 11 ? 0 : this.viewMonth + 1;
+      const nextYear = this.viewMonth === 11 ? this.viewYear + 1 : this.viewYear;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'calendar-day-btn other-month text-[11px]';
+      btn.textContent = d;
+      btn.addEventListener('click', () => {
+        this.selectedDate = new Date(nextYear, nextMonth, d);
+        this.viewYear = nextYear;
+        this.viewMonth = nextMonth;
+        this.render();
+      });
+      DOM.datePickerDaysGrid.appendChild(btn);
+    }
+  },
+
+  confirm() {
+    if (!this.selectedDate) return;
+    const pad = (n) => String(n).padStart(2, '0');
+    const y = this.selectedDate.getFullYear();
+    const m = pad(this.selectedDate.getMonth() + 1);
+    const d = pad(this.selectedDate.getDate());
+    const formatted = `${y}-${m}-${d}`;
+
+    DOM.dateInput.value = formatted;
+    AppState.date = formatted;
+
+    SearchController.syncDateDisplay(formatted);
+
+    // Sync CircularTimePicker if initialized
+    if (typeof CircularTimePicker !== 'undefined') {
+      CircularTimePicker.selectedDate = new Date(this.selectedDate);
+      CircularTimePicker.updateDateDisplay();
+    }
+
+    this.close();
+
+    // Trigger search if both origin and destination are set
+    if (DOM.originInput.value.trim() && DOM.destinationInput.value.trim()) {
+      SearchController.performSearch();
+    }
+  }
+};
+
+// ==========================================
 // 7.5. Circular Dark Mode Time Picker Component
 // ==========================================
 const CircularTimePicker = {
@@ -731,6 +1032,12 @@ const CircularTimePicker = {
     DOM.timePickerNextDayBtn?.addEventListener('click', (e) => {
       e.stopPropagation();
       this.changeDay(1);
+    });
+
+    // Open CustomDatePicker by clicking date display
+    DOM.timePickerDateClickable?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      CustomDatePicker.open();
     });
 
     // Backdrop click (close when clicking outside card)
@@ -907,6 +1214,11 @@ const CircularTimePicker = {
     if (!this.selectedDate) this.selectedDate = new Date();
     this.selectedDate.setDate(this.selectedDate.getDate() + delta);
     this.updateDateDisplay();
+    const pad = (n) => String(n).padStart(2, '0');
+    const formattedDate = `${this.selectedDate.getFullYear()}-${pad(this.selectedDate.getMonth() + 1)}-${pad(this.selectedDate.getDate())}`;
+    DOM.dateInput.value = formattedDate;
+    AppState.date = formattedDate;
+    SearchController.syncDateDisplay(formattedDate);
   },
 
   updateDateDisplay() {
@@ -1259,6 +1571,7 @@ const CircularTimePicker = {
       const formattedDate = `${this.selectedDate.getFullYear()}-${pad(this.selectedDate.getMonth() + 1)}-${pad(this.selectedDate.getDate())}`;
       DOM.dateInput.value = formattedDate;
       AppState.date = formattedDate;
+      SearchController.syncDateDisplay(formattedDate);
     }
 
     this.close();
@@ -1274,6 +1587,20 @@ const CircularTimePicker = {
 // 8. Search & View Controller
 // ==========================================
 const SearchController = {
+  syncDateDisplay(dateStr) {
+    if (!DOM.dateDisplayInput || !dateStr) return;
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      const y = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10);
+      const d = parseInt(parts[2], 10);
+      const dateObj = new Date(y, m - 1, d);
+      const pad = (n) => String(n).padStart(2, '0');
+      const weekdays = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+      DOM.dateDisplayInput.value = `${pad(d)}:${pad(m)}:${y} (${weekdays[dateObj.getDay()]})`;
+    }
+  },
+
   initDateTimeInputs() {
     const now = new Date();
     const year = now.getFullYear();
@@ -1286,6 +1613,7 @@ const SearchController = {
     AppState.time = `${hours}:${minutes}`;
 
     DOM.dateInput.value = AppState.date;
+    this.syncDateDisplay(AppState.date);
     DOM.timeInput.value = AppState.time;
   },
 
@@ -1615,7 +1943,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // 1. Live Clock
   LiveClock.start();
 
-  // 2. Circular Dark Mode Time Picker
+  // 2. Custom Dark Mode Calendar & Circular Time Picker
+  CustomDatePicker.init();
   CircularTimePicker.init();
 
   // 3. Date & Time Inputs
