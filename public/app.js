@@ -709,6 +709,8 @@ const CustomDatePicker = {
   selectedDate: null,
   viewYear: null,
   viewMonth: null, // 0-indexed
+  digitBuffer: '',
+  bufferTimer: null,
 
   init() {
     if (!DOM.dateInputTrigger && !DOM.dateDisplayInput) return;
@@ -752,9 +754,39 @@ const CustomDatePicker = {
       });
     });
 
-    // Keyboard navigation
+    // Keyboard & Numpad navigation
     window.addEventListener('keydown', (e) => {
       if (!this.isOpen) return;
+
+      // Numpad & number keys (0-9)
+      if (/^[0-9]$/.test(e.key)) {
+        e.preventDefault();
+        this.handleDigitInput(e.key);
+        return;
+      }
+
+      // Separators (. , : - /) on numpad or keyboard
+      if (['.', ',', ':', '-', '/'].includes(e.key)) {
+        e.preventDefault();
+        this.handleSeparator();
+        return;
+      }
+
+      // Backspace
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        if (this.digitBuffer.length > 0) {
+          this.digitBuffer = this.digitBuffer.slice(0, -1);
+          if (this.digitBuffer.length > 0) {
+            const buf = this.digitBuffer;
+            this.digitBuffer = '';
+            for (const ch of buf) {
+              this.handleDigitInput(ch);
+            }
+          }
+        }
+        return;
+      }
 
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -778,7 +810,101 @@ const CustomDatePicker = {
     });
   },
 
+  handleDigitInput(d) {
+    if (this.bufferTimer) {
+      clearTimeout(this.bufferTimer);
+      this.bufferTimer = null;
+    }
+
+    this.digitBuffer += d;
+
+    // Reset buffer after 2.5s of inactivity
+    this.bufferTimer = setTimeout(() => {
+      this.digitBuffer = '';
+    }, 2500);
+
+    const buf = this.digitBuffer;
+
+    if (buf.length === 1) {
+      const num = parseInt(buf, 10);
+      if (num >= 4) {
+        // Only days 04..09 can start with 4..9
+        this.setDateComponents(num, this.viewMonth, this.viewYear);
+      } else if (num > 0) {
+        // 1..3: could be 1..3 or start of 10..31
+        this.setDateComponents(num, this.viewMonth, this.viewYear);
+      }
+    } else if (buf.length === 2) {
+      let day = parseInt(buf, 10);
+      if (day === 0) day = 1;
+      const daysInMonth = new Date(this.viewYear, this.viewMonth + 1, 0).getDate();
+      day = Math.min(day, daysInMonth);
+      this.setDateComponents(day, this.viewMonth, this.viewYear);
+    } else if (buf.length === 3) {
+      // 3 digits: Day (2 digits) + Month first digit
+      const day = Math.min(parseInt(buf.slice(0, 2), 10), 31);
+      const mDigit = parseInt(buf[2], 10);
+      if (mDigit > 1) {
+        // e.g. 25 + 4 -> Month 4 (April, index 3)
+        this.setDateComponents(day, mDigit - 1, this.viewYear);
+      } else if (mDigit === 1) {
+        // could be Oct (10), Nov (11), Dec (12), or Jan (01)
+        this.setDateComponents(day, 0, this.viewYear);
+      }
+    } else if (buf.length === 4) {
+      // 4 digits: DDMM
+      const day = parseInt(buf.slice(0, 2), 10);
+      let month = parseInt(buf.slice(2, 4), 10) - 1;
+      if (month < 0) month = 0;
+      if (month > 11) month = 11;
+      this.setDateComponents(day, month, this.viewYear);
+    } else if (buf.length >= 5 && buf.length <= 8) {
+      // DDMM + Year
+      const day = parseInt(buf.slice(0, 2), 10);
+      let month = parseInt(buf.slice(2, 4), 10) - 1;
+      if (month < 0) month = 0;
+      if (month > 11) month = 11;
+
+      if (buf.length === 8) {
+        const year = parseInt(buf.slice(4, 8), 10);
+        if (year >= 2000 && year <= 2100) {
+          this.setDateComponents(day, month, year);
+          this.digitBuffer = '';
+        }
+      } else {
+        this.setDateComponents(day, month, this.viewYear);
+      }
+    } else if (buf.length > 8) {
+      this.digitBuffer = d;
+      this.handleDigitInput(d);
+    }
+  },
+
+  handleSeparator() {
+    if (!this.digitBuffer) return;
+    if (this.digitBuffer.length === 1) {
+      this.digitBuffer = '0' + this.digitBuffer;
+    } else if (this.digitBuffer.length === 3) {
+      this.digitBuffer = this.digitBuffer.slice(0, 2) + '0' + this.digitBuffer[2];
+    }
+  },
+
+  setDateComponents(day, month, year) {
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const clampedDay = Math.min(Math.max(1, day), daysInMonth);
+    this.selectedDate = new Date(year, month, clampedDay);
+    this.viewYear = year;
+    this.viewMonth = month;
+    this.render();
+  },
+
   open() {
+    this.digitBuffer = '';
+    if (this.bufferTimer) {
+      clearTimeout(this.bufferTimer);
+      this.bufferTimer = null;
+    }
+
     // Read current date from DOM.dateInput or default to today
     const dateVal = DOM.dateInput?.value?.trim();
     if (dateVal && /^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
@@ -799,6 +925,11 @@ const CustomDatePicker = {
   },
 
   close() {
+    this.digitBuffer = '';
+    if (this.bufferTimer) {
+      clearTimeout(this.bufferTimer);
+      this.bufferTimer = null;
+    }
     this.isOpen = false;
     DOM.datePickerModal?.classList.remove('open');
   },
