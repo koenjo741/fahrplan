@@ -163,6 +163,7 @@ const DOM = {
   swapStationsBtn: document.getElementById('swapStationsBtn'),
   dateInput: document.getElementById('dateInput'),
   timeInput: document.getElementById('timeInput'),
+  timeInputTrigger: document.getElementById('timeInputTrigger'),
   setNowBtn: document.getElementById('setNowBtn'),
   carrierSelect: document.getElementById('carrierSelect'),
   directCheckbox: document.getElementById('directCheckbox'),
@@ -187,7 +188,23 @@ const DOM = {
   laterControls: document.getElementById('laterControls'),
   loadLaterBtn: document.getElementById('loadLaterBtn'),
   quickStationChips: document.getElementById('quickStationChips'),
-  liveClock: document.getElementById('liveClock')
+  liveClock: document.getElementById('liveClock'),
+  timePickerModal: document.getElementById('timePickerModal'),
+  timePickerCard: document.getElementById('timePickerCard'),
+  clockModeLabel: document.getElementById('clockModeLabel'),
+  timePickerDateDisplay: document.getElementById('timePickerDateDisplay'),
+  timePickerDayLabel: document.getElementById('timePickerDayLabel'),
+  timePickerPrevDayBtn: document.getElementById('timePickerPrevDayBtn'),
+  timePickerNextDayBtn: document.getElementById('timePickerNextDayBtn'),
+  timePickerHourBtn: document.getElementById('timePickerHourBtn'),
+  timePickerMinuteBtn: document.getElementById('timePickerMinuteBtn'),
+  clockFace: document.getElementById('clockFace'),
+  clockHand: document.getElementById('clockHand'),
+  clockHandLine: document.getElementById('clockHandLine'),
+  clockHandCircle: document.getElementById('clockHandCircle'),
+  clockNumbers: document.getElementById('clockNumbers'),
+  timePickerCancelBtn: document.getElementById('timePickerCancelBtn'),
+  timePickerConfirmBtn: document.getElementById('timePickerConfirmBtn')
 };
 
 // ==========================================
@@ -673,6 +690,455 @@ const CardRenderer = {
 };
 
 // ==========================================
+// 7.5. Circular Dark Mode Time Picker Component
+// ==========================================
+const CircularTimePicker = {
+  isOpen: false,
+  view: 'hours', // 'hours' | 'minutes'
+  hour: 12,
+  minute: 0,
+  selectedDate: null,
+  isDragging: false,
+  autoAdvanceTimer: null,
+
+  init() {
+    if (!DOM.timeInput) return;
+
+    // Open modal on clicking input or trigger container
+    DOM.timeInput.addEventListener('click', (e) => {
+      e.preventDefault();
+      this.open();
+    });
+
+    if (DOM.timeInputTrigger) {
+      DOM.timeInputTrigger.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.open();
+      });
+    }
+
+    // Modal controls
+    DOM.timePickerCancelBtn?.addEventListener('click', () => this.close());
+    DOM.timePickerConfirmBtn?.addEventListener('click', () => this.confirm());
+
+    // Day navigation in date badge
+    DOM.timePickerPrevDayBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.changeDay(-1);
+    });
+    DOM.timePickerNextDayBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.changeDay(1);
+    });
+
+    // Backdrop click (close when clicking outside card)
+    DOM.timePickerModal?.addEventListener('click', (e) => {
+      if (e.target === DOM.timePickerModal) {
+        this.close();
+      }
+    });
+
+    // View toggle buttons (Hour / Minute in header)
+    DOM.timePickerHourBtn?.addEventListener('click', () => this.switchView('hours'));
+    DOM.timePickerMinuteBtn?.addEventListener('click', () => this.switchView('minutes'));
+
+    // Quick adjustment chips
+    DOM.timePickerCard?.querySelectorAll('.time-quick-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const action = btn.dataset.action;
+        this.handleQuickAction(action);
+      });
+    });
+
+    // Pointer events on clock face (mouse & touch via Unified Pointer API)
+    if (DOM.clockFace) {
+      DOM.clockFace.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        this.isDragging = true;
+        DOM.clockFace.setPointerCapture(e.pointerId);
+        this.handlePointer(e, false);
+      });
+
+      DOM.clockFace.addEventListener('pointermove', (e) => {
+        if (!this.isDragging) return;
+        e.preventDefault();
+        this.handlePointer(e, false);
+      });
+
+      const onPointerEnd = (e) => {
+        if (!this.isDragging) return;
+        this.isDragging = false;
+        try { DOM.clockFace.releasePointerCapture(e.pointerId); } catch (_) {}
+        this.handlePointer(e, true);
+      };
+
+      DOM.clockFace.addEventListener('pointerup', onPointerEnd);
+      DOM.clockFace.addEventListener('pointercancel', onPointerEnd);
+    }
+
+    // Keyboard navigation
+    window.addEventListener('keydown', (e) => {
+      if (!this.isOpen) return;
+
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        this.close();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        this.confirm();
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        this.switchView(this.view === 'hours' ? 'minutes' : 'hours');
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        this.adjustValue(1);
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        this.adjustValue(-1);
+      }
+    });
+  },
+
+  changeDay(delta) {
+    if (!this.selectedDate) this.selectedDate = new Date();
+    this.selectedDate.setDate(this.selectedDate.getDate() + delta);
+    this.updateDateDisplay();
+  },
+
+  updateDateDisplay() {
+    if (!DOM.timePickerDateDisplay) return;
+    if (!this.selectedDate) {
+      this.selectedDate = new Date();
+    }
+    const d = this.selectedDate;
+    const pad = (n) => String(n).padStart(2, '0');
+    const day = pad(d.getDate());
+    const month = pad(d.getMonth() + 1);
+    const year = d.getFullYear();
+    // Strictly formatted as (DD:MM:YYYY) as required
+    DOM.timePickerDateDisplay.textContent = `${day}:${month}:${year}`;
+
+    if (DOM.timePickerDayLabel) {
+      const weekdays = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+      DOM.timePickerDayLabel.textContent = `(${weekdays[d.getDay()]})`;
+    }
+  },
+
+  open() {
+    if (this.autoAdvanceTimer) {
+      clearTimeout(this.autoAdvanceTimer);
+      this.autoAdvanceTimer = null;
+    }
+
+    // Sync date with dateInput or default to today
+    const dateVal = DOM.dateInput?.value?.trim();
+    if (dateVal && /^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
+      const [y, m, d] = dateVal.split('-').map(Number);
+      this.selectedDate = new Date(y, m - 1, d);
+    } else {
+      this.selectedDate = new Date();
+    }
+    this.updateDateDisplay();
+
+    // Read current time from input or default to now
+    let h = 12;
+    let m = 0;
+    const val = DOM.timeInput?.value?.trim();
+    if (val && /^\d{1,2}:\d{2}$/.test(val)) {
+      const parts = val.split(':');
+      h = parseInt(parts[0], 10);
+      m = parseInt(parts[1], 10);
+    } else {
+      const now = new Date();
+      h = now.getHours();
+      m = now.getMinutes();
+    }
+
+    this.hour = isNaN(h) || h < 0 || h > 23 ? 12 : h;
+    this.minute = isNaN(m) || m < 0 || m > 59 ? 0 : m;
+
+    this.isOpen = true;
+    this.view = 'hours';
+    this.updateHeader();
+    this.renderDial();
+    this.updateHand(true);
+
+    DOM.timePickerModal?.classList.add('open');
+
+    if (window.lucide) lucide.createIcons();
+  },
+
+  close() {
+    if (this.autoAdvanceTimer) {
+      clearTimeout(this.autoAdvanceTimer);
+      this.autoAdvanceTimer = null;
+    }
+    this.isOpen = false;
+    DOM.timePickerModal?.classList.remove('open');
+  },
+
+  switchView(newView) {
+    if (this.autoAdvanceTimer) {
+      clearTimeout(this.autoAdvanceTimer);
+      this.autoAdvanceTimer = null;
+    }
+    this.view = newView;
+    this.updateHeader();
+    this.renderDial();
+    this.updateHand(true);
+  },
+
+  updateHeader() {
+    const pad = (n) => String(n).padStart(2, '0');
+    if (DOM.timePickerHourBtn) DOM.timePickerHourBtn.textContent = pad(this.hour);
+    if (DOM.timePickerMinuteBtn) DOM.timePickerMinuteBtn.textContent = pad(this.minute);
+
+    const activeClasses = 'text-4xl font-mono font-bold px-3 py-1.5 rounded-2xl bg-[#155DFC]/20 text-blue-300 border border-[#155DFC]/60 shadow-sm shadow-[#155DFC]/25 transition-all cursor-pointer hover:bg-[#155DFC]/30';
+    const inactiveClasses = 'text-4xl font-mono font-bold px-3 py-1.5 rounded-2xl bg-slate-800/80 text-slate-400 border border-slate-700/60 hover:text-slate-200 transition-all cursor-pointer';
+
+    if (this.view === 'hours') {
+      if (DOM.clockModeLabel) DOM.clockModeLabel.textContent = 'Stunde wählen';
+      if (DOM.timePickerHourBtn) DOM.timePickerHourBtn.className = activeClasses;
+      if (DOM.timePickerMinuteBtn) DOM.timePickerMinuteBtn.className = inactiveClasses;
+    } else {
+      if (DOM.clockModeLabel) DOM.clockModeLabel.textContent = 'Minute wählen';
+      if (DOM.timePickerMinuteBtn) DOM.timePickerMinuteBtn.className = activeClasses;
+      if (DOM.timePickerHourBtn) DOM.timePickerHourBtn.className = inactiveClasses;
+    }
+  },
+
+  renderDial() {
+    if (!DOM.clockNumbers) return;
+    DOM.clockNumbers.innerHTML = '';
+
+    const center = 130; // 260px / 2
+
+    if (this.view === 'hours') {
+      // 24-Hour Dial: Outer ring (00, 13..23) at R=94, Inner ring (12, 1..11) at R=60
+      const outerRadius = 94;
+      const innerRadius = 60;
+
+      for (let i = 0; i < 12; i++) {
+        const angleRad = (i * 30 - 90) * (Math.PI / 180);
+
+        // Outer hour: 00 at 12 o'clock, 13..23 at 1..11
+        const outerHour = i === 0 ? 0 : i + 12;
+        const outerX = center + outerRadius * Math.cos(angleRad) - 16;
+        const outerY = center + outerRadius * Math.sin(angleRad) - 16;
+
+        const outerEl = document.createElement('div');
+        outerEl.className = `clock-number text-xs font-semibold ${this.hour === outerHour ? 'active' : 'text-slate-300'}`;
+        outerEl.style.left = `${outerX}px`;
+        outerEl.style.top = `${outerY}px`;
+        outerEl.textContent = String(outerHour).padStart(2, '0');
+        outerEl.dataset.hour = outerHour;
+        DOM.clockNumbers.appendChild(outerEl);
+
+        // Inner hour: 12 at 12 o'clock, 1..11 at 1..11
+        const innerHour = i === 0 ? 12 : i;
+        const innerX = center + innerRadius * Math.cos(angleRad) - 16;
+        const innerY = center + innerRadius * Math.sin(angleRad) - 16;
+
+        const innerEl = document.createElement('div');
+        innerEl.className = `clock-number text-[11px] font-semibold ${this.hour === innerHour ? 'active' : 'text-slate-400'}`;
+        innerEl.style.left = `${innerX}px`;
+        innerEl.style.top = `${innerY}px`;
+        innerEl.textContent = String(innerHour);
+        innerEl.dataset.hour = innerHour;
+        DOM.clockNumbers.appendChild(innerEl);
+      }
+    } else {
+      // Minutes Dial: 60 minutes. Numbers at every 5-min interval, subtle dots for others.
+      const radius = 94;
+
+      for (let m = 0; m < 60; m++) {
+        const angleRad = (m * 6 - 90) * (Math.PI / 180);
+
+        if (m % 5 === 0) {
+          const x = center + radius * Math.cos(angleRad) - 16;
+          const y = center + radius * Math.sin(angleRad) - 16;
+
+          const el = document.createElement('div');
+          el.className = `clock-number text-xs font-semibold ${this.minute === m ? 'active' : 'text-slate-300'}`;
+          el.style.left = `${x}px`;
+          el.style.top = `${y}px`;
+          el.textContent = String(m).padStart(2, '0');
+          el.dataset.minute = m;
+          DOM.clockNumbers.appendChild(el);
+        } else {
+          const x = center + radius * Math.cos(angleRad) - 2;
+          const y = center + radius * Math.sin(angleRad) - 2;
+
+          const dot = document.createElement('div');
+          dot.className = `clock-dot ${this.minute === m ? 'active-minute' : ''}`;
+          dot.style.left = `${x}px`;
+          dot.style.top = `${y}px`;
+          DOM.clockNumbers.appendChild(dot);
+        }
+      }
+    }
+  },
+
+  updateHand(animate = false) {
+    if (!DOM.clockHand) return;
+
+    let angleDeg = 0;
+    let lengthPx = 94;
+
+    if (this.view === 'hours') {
+      if (this.hour === 0) {
+        angleDeg = 0;
+        lengthPx = 94;
+      } else if (this.hour >= 13) {
+        angleDeg = (this.hour - 12) * 30;
+        lengthPx = 94;
+      } else if (this.hour === 12) {
+        angleDeg = 0;
+        lengthPx = 60;
+      } else {
+        angleDeg = this.hour * 30;
+        lengthPx = 60;
+      }
+    } else {
+      angleDeg = this.minute * 6;
+      lengthPx = 94;
+    }
+
+    DOM.clockHand.style.transition = animate ? 'transform 0.16s cubic-bezier(0.4, 0, 0.2, 1)' : 'none';
+    DOM.clockHand.style.transform = `rotate(${angleDeg}deg)`;
+
+    if (DOM.clockHandLine) DOM.clockHandLine.style.height = `${lengthPx}px`;
+    if (DOM.clockHandCircle) DOM.clockHandCircle.style.transform = `translateY(-${lengthPx}px)`;
+
+    // Update active highlight on rendered numbers/dots
+    this.updateActiveDialElements();
+  },
+
+  updateActiveDialElements() {
+    if (!DOM.clockNumbers) return;
+
+    if (this.view === 'hours') {
+      DOM.clockNumbers.querySelectorAll('.clock-number').forEach(el => {
+        const h = parseInt(el.dataset.hour, 10);
+        if (h === this.hour) {
+          el.classList.add('active');
+          el.classList.remove('text-slate-300', 'text-slate-400');
+        } else {
+          el.classList.remove('active');
+          el.classList.add(h >= 13 || h === 0 ? 'text-slate-300' : 'text-slate-400');
+        }
+      });
+    } else {
+      DOM.clockNumbers.querySelectorAll('.clock-number').forEach(el => {
+        const m = parseInt(el.dataset.minute, 10);
+        if (m === this.minute) {
+          el.classList.add('active');
+          el.classList.remove('text-slate-300');
+        } else {
+          el.classList.remove('active');
+          el.classList.add('text-slate-300');
+        }
+      });
+    }
+  },
+
+  handlePointer(e, isEnd = false) {
+    if (!DOM.clockFace) return;
+    const rect = DOM.clockFace.getBoundingClientRect();
+    const clientX = e.clientX;
+    const clientY = e.clientY;
+
+    const x = clientX - rect.left - (rect.width / 2);
+    const y = clientY - rect.top - (rect.height / 2);
+
+    const r = Math.sqrt(x * x + y * y);
+    const rad = Math.atan2(y, x);
+    const deg = rad * (180 / Math.PI);
+    const degFrom12 = (deg + 90 + 360) % 360;
+
+    if (this.view === 'hours') {
+      const slot = Math.round(degFrom12 / 30) % 12;
+      const isInner = r < 77;
+
+      if (isInner) {
+        this.hour = slot === 0 ? 12 : slot;
+      } else {
+        this.hour = slot === 0 ? 0 : slot + 12;
+      }
+
+      this.updateHeader();
+      this.updateHand(false);
+
+      if (isEnd) {
+        // Playful auto-advance to minutes view like on Android / Material Design
+        this.autoAdvanceTimer = setTimeout(() => {
+          this.switchView('minutes');
+        }, 180);
+      }
+    } else {
+      this.minute = Math.round(degFrom12 / 6) % 60;
+      this.updateHeader();
+      this.updateHand(false);
+    }
+  },
+
+  handleQuickAction(action) {
+    if (action === 'now') {
+      const now = new Date();
+      this.hour = now.getHours();
+      this.minute = now.getMinutes();
+      this.selectedDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      this.updateDateDisplay();
+    } else if (action === '+15' || action === '+30' || action === '+60') {
+      const addMins = action === '+15' ? 15 : action === '+30' ? 30 : 60;
+      const currentMins = this.hour * 60 + this.minute;
+      const nextMins = currentMins + addMins;
+      if (nextMins >= 24 * 60) {
+        if (!this.selectedDate) this.selectedDate = new Date();
+        this.selectedDate.setDate(this.selectedDate.getDate() + 1);
+        this.updateDateDisplay();
+      }
+      const total = nextMins % (24 * 60);
+      this.hour = Math.floor(total / 60);
+      this.minute = total % 60;
+    }
+    this.updateHeader();
+    this.updateHand(true);
+  },
+
+  adjustValue(delta) {
+    if (this.view === 'hours') {
+      this.hour = (this.hour + delta + 24) % 24;
+    } else {
+      this.minute = (this.minute + delta + 60) % 60;
+    }
+    this.updateHeader();
+    this.updateHand(true);
+  },
+
+  confirm() {
+    const pad = (n) => String(n).padStart(2, '0');
+    const formatted = `${pad(this.hour)}:${pad(this.minute)}`;
+
+    DOM.timeInput.value = formatted;
+    AppState.time = formatted;
+
+    if (this.selectedDate) {
+      const formattedDate = `${this.selectedDate.getFullYear()}-${pad(this.selectedDate.getMonth() + 1)}-${pad(this.selectedDate.getDate())}`;
+      DOM.dateInput.value = formattedDate;
+      AppState.date = formattedDate;
+    }
+
+    this.close();
+
+    // Trigger search if both origin and destination are set
+    if (DOM.originInput.value.trim() && DOM.destinationInput.value.trim()) {
+      SearchController.performSearch();
+    }
+  }
+};
+
+// ==========================================
 // 8. Search & View Controller
 // ==========================================
 const SearchController = {
@@ -1017,7 +1483,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // 1. Live Clock
   LiveClock.start();
 
-  // 2. Date & Time Inputs
+  // 2. Circular Dark Mode Time Picker
+  CircularTimePicker.init();
+
+  // 3. Date & Time Inputs
   SearchController.initDateTimeInputs();
 
   // 3. Restore persisted preferences from localStorage

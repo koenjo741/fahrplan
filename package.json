@@ -1,6 +1,6 @@
 {
   "name": "fahrplan",
-  "version": "1.6.0",
+  "version": "1.7.1",
   "description": "Zugfahrpläne Europas (Fahrpläne EU)",
   "scripts": {
     "dev": "netlify dev",

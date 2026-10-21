@@ -316,3 +316,73 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
 .animate-slide-in {
   animation: fadeInSlide 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+/* ==========================================
+ * Circular Dark Mode Time Picker (#155DFC Cobalt Blue)
+ * ========================================== */
+.time-picker-modal {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.time-picker-modal.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.time-picker-card {
+  transform: scale(0.92) translateY(8px);
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.time-picker-modal.open .time-picker-card {
+  transform: scale(1) translateY(0);
+}
+
+.clock-face {
+  background: radial-gradient(circle at center, #0B1936 0%, #030712 100%);
+  box-shadow: inset 0 2px 14px rgba(0, 0, 0, 0.8), 0 0 24px rgba(21, 93, 252, 0.15);
+}
+
+.clock-number {
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  z-index: 20;
+  transition: color 0.15s ease, transform 0.15s ease;
+}
+
+.clock-number.active {
+  color: #ffffff;
+  font-weight: 800;
+  text-shadow: 0 0 12px rgba(21, 93, 252, 0.95);
+}
+
+.clock-number:hover {
+  color: #93c5fd;
+  transform: scale(1.15);
+}
+
+.clock-dot {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  background-color: rgba(71, 85, 105, 0.7);
+  pointer-events: none;
+  z-index: 10;
+}
+
+.clock-dot.active-minute {
+  background-color: #155DFC;
+  box-shadow: 0 0 8px #155DFC;
+}
+
