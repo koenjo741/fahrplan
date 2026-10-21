@@ -380,31 +380,27 @@
         </span>
       </div>
 
-      <!-- Persistent Date Display Badge (DD:MM:YYYY) -->
-      <div class="flex items-center justify-between w-full px-3 py-1.5 mb-2.5 rounded-xl bg-blue-950/40 border border-[#155DFC]/30 text-xs">
-        <div class="flex items-center space-x-1.5 text-slate-400">
-          <i data-lucide="calendar" class="w-3.5 h-3.5 text-[#155DFC]"></i>
-          <span class="text-[11px] font-medium uppercase tracking-wider text-slate-400">Datum:</span>
-        </div>
+      <!-- Persistent Date Display Badge (< DD:MM:YYYY (DDD) > centered) -->
+      <div class="flex items-center justify-center space-x-2.5 w-full px-3 py-1.5 mb-2.5 rounded-xl bg-blue-950/40 border border-[#155DFC]/30 select-none">
+        <button type="button" id="timePickerPrevDayBtn" class="p-1.5 rounded-lg hover:bg-blue-900/50 text-slate-400 hover:text-blue-300 transition-colors cursor-pointer" title="Vorheriger Tag">
+          <i data-lucide="chevron-left" class="w-4 h-4"></i>
+        </button>
         <div class="flex items-center space-x-1.5">
-          <button type="button" id="timePickerPrevDayBtn" class="p-1 rounded-lg hover:bg-blue-900/40 text-slate-400 hover:text-blue-300 transition-colors cursor-pointer" title="Vorheriger Tag">
-            <i data-lucide="chevron-left" class="w-3.5 h-3.5"></i>
-          </button>
-          <span id="timePickerDateDisplay" class="font-mono font-bold text-blue-200 tracking-wider text-xs">21:10:2026</span>
-          <span id="timePickerDayLabel" class="text-[11px] text-blue-400/80 font-medium">(Mi)</span>
-          <button type="button" id="timePickerNextDayBtn" class="p-1 rounded-lg hover:bg-blue-900/40 text-slate-400 hover:text-blue-300 transition-colors cursor-pointer" title="Nächster Tag">
-            <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
-          </button>
+          <span id="timePickerDateDisplay" class="font-mono font-bold text-blue-200 tracking-wider text-[15px]">21:10:2026</span>
+          <span id="timePickerDayLabel" class="text-[13.5px] text-blue-400 font-medium">(Mi)</span>
         </div>
+        <button type="button" id="timePickerNextDayBtn" class="p-1.5 rounded-lg hover:bg-blue-900/50 text-slate-400 hover:text-blue-300 transition-colors cursor-pointer" title="Nächster Tag">
+          <i data-lucide="chevron-right" class="w-4 h-4"></i>
+        </button>
       </div>
 
       <!-- Time Display Header (Hours : Minutes) -->
       <div class="flex items-center justify-center space-x-2 my-1">
-        <button type="button" id="timePickerHourBtn" class="text-4xl font-mono font-bold px-3 py-1.5 rounded-2xl bg-[#155DFC]/20 text-blue-300 border border-[#155DFC]/60 shadow-sm shadow-[#155DFC]/25 transition-all cursor-pointer hover:bg-[#155DFC]/30">
+        <button type="button" id="timePickerHourBtn" class="text-4xl font-mono font-bold px-3 py-1.5 rounded-2xl bg-[#155DFC]/20 text-blue-300 border border-[#155DFC]/60 shadow-sm shadow-[#155DFC]/25 transition-all cursor-pointer hover:bg-[#155DFC]/30 focus:outline-none focus:ring-2 focus:ring-[#155DFC]">
           14
         </button>
         <span class="text-3xl font-bold text-slate-500 select-none">:</span>
-        <button type="button" id="timePickerMinuteBtn" class="text-4xl font-mono font-bold px-3 py-1.5 rounded-2xl bg-slate-800/80 text-slate-400 border border-slate-700/60 hover:text-slate-200 transition-all cursor-pointer">
+        <button type="button" id="timePickerMinuteBtn" class="text-4xl font-mono font-bold px-3 py-1.5 rounded-2xl bg-slate-800/80 text-slate-400 border border-slate-700/60 hover:text-slate-200 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/50">
           30
         </button>
       </div>
@@ -469,6 +465,6 @@
   </div>
 
   <!-- Main JavaScript App -->
-  <script src="app.js?v=1.7.1"></script>
+  <script src="app.js?v=1.7.2"></script>
 </body>
 </html>

@@ -700,6 +700,8 @@ const CircularTimePicker = {
   selectedDate: null,
   isDragging: false,
   autoAdvanceTimer: null,
+  digitBuffer: '',
+  bufferTimer: null,
 
   init() {
     if (!DOM.timeInput) return;
@@ -739,8 +741,16 @@ const CircularTimePicker = {
     });
 
     // View toggle buttons (Hour / Minute in header)
-    DOM.timePickerHourBtn?.addEventListener('click', () => this.switchView('hours'));
-    DOM.timePickerMinuteBtn?.addEventListener('click', () => this.switchView('minutes'));
+    DOM.timePickerHourBtn?.addEventListener('click', () => this.switchView('hours', true));
+    DOM.timePickerMinuteBtn?.addEventListener('click', () => this.switchView('minutes', true));
+
+    // Focus synchronization for Numpad input
+    DOM.timePickerHourBtn?.addEventListener('focus', () => {
+      if (this.view !== 'hours') this.switchView('hours', false);
+    });
+    DOM.timePickerMinuteBtn?.addEventListener('focus', () => {
+      if (this.view !== 'minutes') this.switchView('minutes', false);
+    });
 
     // Quick adjustment chips
     DOM.timePickerCard?.querySelectorAll('.time-quick-btn').forEach(btn => {
@@ -776,9 +786,27 @@ const CircularTimePicker = {
       DOM.clockFace.addEventListener('pointercancel', onPointerEnd);
     }
 
-    // Keyboard navigation
+    // Keyboard & Numpad navigation
     window.addEventListener('keydown', (e) => {
       if (!this.isOpen) return;
+
+      // Numpad & number keys (0-9)
+      if (/^[0-9]$/.test(e.key)) {
+        e.preventDefault();
+        this.handleDigitInput(e.key);
+        return;
+      }
+
+      // Backspace clears buffer or returns to hours
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        if (this.digitBuffer.length > 0) {
+          this.digitBuffer = '';
+        } else if (this.view === 'minutes') {
+          this.switchView('hours', true);
+        }
+        return;
+      }
 
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -788,7 +816,7 @@ const CircularTimePicker = {
         this.confirm();
       } else if (e.key === 'Tab') {
         e.preventDefault();
-        this.switchView(this.view === 'hours' ? 'minutes' : 'hours');
+        this.switchView(this.view === 'hours' ? 'minutes' : 'hours', true);
       } else if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
         e.preventDefault();
         this.adjustValue(1);
@@ -797,6 +825,82 @@ const CircularTimePicker = {
         this.adjustValue(-1);
       }
     });
+  },
+
+  handleDigitInput(d) {
+    if (this.bufferTimer) {
+      clearTimeout(this.bufferTimer);
+      this.bufferTimer = null;
+    }
+
+    if (this.view === 'hours') {
+      if (this.digitBuffer.length === 0) {
+        if (d >= '3') {
+          // Single digit hour 03..09, then jump to minutes
+          this.hour = parseInt(d, 10);
+          this.digitBuffer = '';
+          this.updateHeader();
+          this.updateHand(true);
+          setTimeout(() => {
+            this.switchView('minutes', true);
+          }, 150);
+        } else {
+          // Digit 0, 1, or 2: buffer it
+          this.digitBuffer = d;
+          this.hour = parseInt(d, 10);
+          this.updateHeader();
+          this.updateHand(true);
+          this.bufferTimer = setTimeout(() => {
+            this.digitBuffer = '';
+          }, 1500);
+        }
+      } else {
+        // Second digit for hours
+        const combined = parseInt(this.digitBuffer + d, 10);
+        if (combined <= 23) {
+          this.hour = combined;
+        } else {
+          this.hour = parseInt(d, 10);
+        }
+        this.digitBuffer = '';
+        this.updateHeader();
+        this.updateHand(true);
+        setTimeout(() => {
+          this.switchView('minutes', true);
+        }, 150);
+      }
+    } else {
+      // Minutes view
+      if (this.digitBuffer.length === 0) {
+        if (d >= '6') {
+          // Single digit minute 06..09
+          this.minute = parseInt(d, 10);
+          this.digitBuffer = '';
+          this.updateHeader();
+          this.updateHand(true);
+        } else {
+          // Digit 0..5
+          this.digitBuffer = d;
+          this.minute = parseInt(d, 10);
+          this.updateHeader();
+          this.updateHand(true);
+          this.bufferTimer = setTimeout(() => {
+            this.digitBuffer = '';
+          }, 1500);
+        }
+      } else {
+        // Second digit for minutes
+        const combined = parseInt(this.digitBuffer + d, 10);
+        if (combined <= 59) {
+          this.minute = combined;
+        } else {
+          this.minute = parseInt(d, 10);
+        }
+        this.digitBuffer = '';
+        this.updateHeader();
+        this.updateHand(true);
+      }
+    }
   },
 
   changeDay(delta) {
@@ -828,6 +932,11 @@ const CircularTimePicker = {
     if (this.autoAdvanceTimer) {
       clearTimeout(this.autoAdvanceTimer);
       this.autoAdvanceTimer = null;
+    }
+    this.digitBuffer = '';
+    if (this.bufferTimer) {
+      clearTimeout(this.bufferTimer);
+      this.bufferTimer = null;
     }
 
     // Sync date with dateInput or default to today
@@ -865,6 +974,11 @@ const CircularTimePicker = {
 
     DOM.timePickerModal?.classList.add('open');
 
+    // Focus hour button so user can immediately type with Numpad
+    setTimeout(() => {
+      DOM.timePickerHourBtn?.focus();
+    }, 60);
+
     if (window.lucide) lucide.createIcons();
   },
 
@@ -873,19 +987,37 @@ const CircularTimePicker = {
       clearTimeout(this.autoAdvanceTimer);
       this.autoAdvanceTimer = null;
     }
+    this.digitBuffer = '';
+    if (this.bufferTimer) {
+      clearTimeout(this.bufferTimer);
+      this.bufferTimer = null;
+    }
     this.isOpen = false;
     DOM.timePickerModal?.classList.remove('open');
   },
 
-  switchView(newView) {
+  switchView(newView, setFocus = true) {
     if (this.autoAdvanceTimer) {
       clearTimeout(this.autoAdvanceTimer);
       this.autoAdvanceTimer = null;
+    }
+    this.digitBuffer = '';
+    if (this.bufferTimer) {
+      clearTimeout(this.bufferTimer);
+      this.bufferTimer = null;
     }
     this.view = newView;
     this.updateHeader();
     this.renderDial();
     this.updateHand(true);
+
+    if (setFocus) {
+      if (newView === 'hours' && DOM.timePickerHourBtn) {
+        DOM.timePickerHourBtn.focus();
+      } else if (newView === 'minutes' && DOM.timePickerMinuteBtn) {
+        DOM.timePickerMinuteBtn.focus();
+      }
+    }
   },
 
   updateHeader() {
@@ -893,8 +1025,8 @@ const CircularTimePicker = {
     if (DOM.timePickerHourBtn) DOM.timePickerHourBtn.textContent = pad(this.hour);
     if (DOM.timePickerMinuteBtn) DOM.timePickerMinuteBtn.textContent = pad(this.minute);
 
-    const activeClasses = 'text-4xl font-mono font-bold px-3 py-1.5 rounded-2xl bg-[#155DFC]/20 text-blue-300 border border-[#155DFC]/60 shadow-sm shadow-[#155DFC]/25 transition-all cursor-pointer hover:bg-[#155DFC]/30';
-    const inactiveClasses = 'text-4xl font-mono font-bold px-3 py-1.5 rounded-2xl bg-slate-800/80 text-slate-400 border border-slate-700/60 hover:text-slate-200 transition-all cursor-pointer';
+    const activeClasses = 'text-4xl font-mono font-bold px-3 py-1.5 rounded-2xl bg-[#155DFC]/20 text-blue-300 border border-[#155DFC]/60 shadow-sm shadow-[#155DFC]/25 transition-all cursor-pointer hover:bg-[#155DFC]/30 focus:outline-none focus:ring-2 focus:ring-[#155DFC]';
+    const inactiveClasses = 'text-4xl font-mono font-bold px-3 py-1.5 rounded-2xl bg-slate-800/80 text-slate-400 border border-slate-700/60 hover:text-slate-200 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/50';
 
     if (this.view === 'hours') {
       if (DOM.clockModeLabel) DOM.clockModeLabel.textContent = 'Stunde wählen';
