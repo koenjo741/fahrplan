@@ -691,19 +691,25 @@ const SearchController = {
     DOM.timeInput.value = AppState.time;
   },
 
-  setLoading(isLoading) {
+  setLoading(isLoading, customMessage = null) {
     AppState.isLoading = isLoading;
 
     if (isLoading) {
-      const selectedCarrier = DOM.carrierSelect ? DOM.carrierSelect.value : AppState.carrier;
-      DOM.loadingText.textContent = selectedCarrier === 'westbahn'
-        ? 'Fahrpläne der Westbahn werden abgefragt.'
-        : 'Fahrpläne werden abgefragt.';
+      if (customMessage) {
+        DOM.loadingText.textContent = customMessage;
+      } else {
+        const selectedCarrier = DOM.carrierSelect ? DOM.carrierSelect.value : AppState.carrier;
+        DOM.loadingText.textContent = selectedCarrier === 'westbahn'
+          ? 'Fahrpläne der Westbahn werden abgefragt.'
+          : 'Fahrpläne werden abgefragt.';
+      }
 
       DOM.loadingState.classList.remove('hidden');
       DOM.errorState.classList.add('hidden');
       DOM.emptyState.classList.add('hidden');
       DOM.resultsContainer.innerHTML = '';
+      DOM.earlierControls.classList.add('hidden');
+      DOM.laterControls.classList.add('hidden');
 
       // Switch button to "Suche abbrechen" with rose/amber gradient
       DOM.submitBtn.innerHTML = `
@@ -734,6 +740,8 @@ const SearchController = {
     DOM.loadingState.classList.add('hidden');
     DOM.resultsContainer.innerHTML = '';
     DOM.emptyState.classList.add('hidden');
+    DOM.earlierControls.classList.add('hidden');
+    DOM.laterControls.classList.add('hidden');
     if (window.lucide) lucide.createIcons();
   },
 
@@ -745,6 +753,7 @@ const SearchController = {
     this.setLoading(false);
     if (AppState.journeys && AppState.journeys.length > 0) {
       this.renderResults(AppState.journeys);
+      this.updatePaginationControls();
     } else {
       DOM.loadingState.classList.add('hidden');
     }
@@ -755,7 +764,7 @@ const SearchController = {
 
     if (!journeys || journeys.length === 0) {
       DOM.emptyState.classList.remove('hidden');
-      DOM.resultsCountBadge.textContent = '0 Züge';
+      DOM.resultsCountBadge.textContent = '0 Züge gefunden';
       if (AppState.direct) {
         DOM.emptyStateAction?.classList.remove('hidden');
       } else {
@@ -766,7 +775,7 @@ const SearchController = {
     }
 
     DOM.emptyState.classList.add('hidden');
-    DOM.resultsCountBadge.textContent = `${journeys.length} ${journeys.length === 1 ? 'Zug' : 'Züge'} (nächste 12 Std.)`;
+    DOM.resultsCountBadge.textContent = `${journeys.length} ${journeys.length === 1 ? 'Zug gefunden' : 'Züge gefunden'}`;
 
     journeys.forEach((journey, index) => {
       const card = CardRenderer.createCard(journey, index);
@@ -777,17 +786,55 @@ const SearchController = {
   },
 
   updatePaginationControls() {
-    if (AppState.pagination.earlierRef) {
+    if (AppState.journeys && AppState.journeys.length > 0) {
       DOM.earlierControls.classList.remove('hidden');
-    } else {
-      DOM.earlierControls.classList.add('hidden');
-    }
-
-    if (AppState.pagination.laterRef) {
       DOM.laterControls.classList.remove('hidden');
     } else {
+      DOM.earlierControls.classList.add('hidden');
       DOM.laterControls.classList.add('hidden');
     }
+  },
+
+  loadEarlier() {
+    if (AppState.isLoading) return;
+    if (!AppState.journeys || AppState.journeys.length === 0) return;
+
+    // von den aktuell angezeigten Verbindungen noch die ersten beiden
+    const preserved = AppState.journeys.slice(0, 2);
+    const firstJourney = AppState.journeys[0];
+    const firstDepTime = firstJourney.depTimestamp || new Date(firstJourney.departureTime).getTime();
+
+    // zusätzlich alle Verbindungen, die innerhalb von 12 Stunden davor liegen
+    const startTime = new Date(firstDepTime - 12 * 60 * 60 * 1000);
+    const endTime = new Date(firstDepTime);
+
+    this.performSearch({
+      mode: 'earlier',
+      startISO: startTime.toISOString(),
+      endISO: endTime.toISOString(),
+      preserved
+    });
+  },
+
+  loadLater() {
+    if (AppState.isLoading) return;
+    if (!AppState.journeys || AppState.journeys.length === 0) return;
+
+    // noch die letzten beiden der aktuell angezeigten Verbindungen
+    const preserved = AppState.journeys.slice(-2);
+    const lastJourney = AppState.journeys[AppState.journeys.length - 1];
+    const lastDepTime = lastJourney.depTimestamp || new Date(lastJourney.departureTime).getTime();
+
+    // zusätzlich alle Verbindungen, die innerhalb von 12 Stunden danach liegen
+    const startTime = new Date(lastDepTime);
+    const endTime = new Date(lastDepTime + 12 * 60 * 60 * 1000);
+
+    this.performSearch({
+      mode: 'later',
+      startISO: startTime.toISOString(),
+      endISO: endTime.toISOString(),
+      preserved
+    });
   },
 
   async performSearch(paginationOptions = {}, isRetry = false) {
@@ -815,24 +862,38 @@ const SearchController = {
       }
       AppState.abortController = new AbortController();
 
-      this.setLoading(true);
+      const loadingMsg = paginationOptions.mode === 'earlier'
+        ? 'Frühere Fahrpläne (12 Stunden) werden abgefragt...'
+        : paginationOptions.mode === 'later'
+        ? 'Spätere Fahrpläne (12 Stunden) werden abgefragt...'
+        : null;
+
+      this.setLoading(true, loadingMsg);
 
       // Update Route Overview Banner
       DOM.bannerOrigin.textContent = DOM.originInput.value.trim() || 'Start';
       DOM.bannerDestination.textContent = DOM.destinationInput.value.trim() || 'Ziel';
-      DOM.bannerDate.textContent = Formatters.formatDateLabel(DOM.dateInput.value);
+      if (!paginationOptions.mode) {
+        DOM.bannerDate.textContent = Formatters.formatDateLabel(DOM.dateInput.value);
+      }
       DOM.routeBanner.classList.remove('hidden');
     }
 
     const params = new URLSearchParams({
       origin,
       destination,
-      date: DOM.dateInput.value,
-      time: DOM.timeInput.value,
       carrier: DOM.carrierSelect.value,
       direct: DOM.directCheckbox.checked ? 'true' : 'false',
       hours: '12'
     });
+
+    if (paginationOptions.startISO) {
+      params.append('startISO', paginationOptions.startISO);
+      if (paginationOptions.endISO) params.append('endISO', paginationOptions.endISO);
+    } else {
+      params.append('date', DOM.dateInput.value);
+      params.append('time', DOM.timeInput.value);
+    }
 
     if (paginationOptions.earlierRef) params.append('earlierRef', paginationOptions.earlierRef);
     if (paginationOptions.laterRef) params.append('laterRef', paginationOptions.laterRef);
@@ -875,11 +936,50 @@ const SearchController = {
         throw new Error(data.error || 'Fehler beim Laden des Fahrplans.');
       }
 
-      AppState.journeys = data.journeys || [];
+      const returnedJourneys = data.journeys || [];
+
+      if (paginationOptions.mode === 'earlier' && paginationOptions.preserved) {
+        const journeyMap = new Map();
+        const getJourneyKey = (j) => `${j.depTimestamp}-${j.legs?.[0]?.line?.name || j.originName || ''}`;
+
+        // 1. All connections found within 12 hours davor
+        returnedJourneys.forEach(j => journeyMap.set(getJourneyKey(j), j));
+
+        // 2. The first two connections from the previously displayed view
+        paginationOptions.preserved.forEach(j => journeyMap.set(getJourneyKey(j), j));
+
+        AppState.journeys = Array.from(journeyMap.values()).sort((a, b) => a.depTimestamp - b.depTimestamp);
+      } else if (paginationOptions.mode === 'later' && paginationOptions.preserved) {
+        const journeyMap = new Map();
+        const getJourneyKey = (j) => `${j.depTimestamp}-${j.legs?.[0]?.line?.name || j.originName || ''}`;
+
+        // 1. The last two connections from the previously displayed view
+        paginationOptions.preserved.forEach(j => journeyMap.set(getJourneyKey(j), j));
+
+        // 2. All connections found within 12 hours danach
+        returnedJourneys.forEach(j => journeyMap.set(getJourneyKey(j), j));
+
+        AppState.journeys = Array.from(journeyMap.values()).sort((a, b) => a.depTimestamp - b.depTimestamp);
+      } else {
+        AppState.journeys = returnedJourneys;
+      }
+
       AppState.pagination = data.pagination || { earlierRef: null, laterRef: null };
+
+      // Update banner date to match the earliest journey in current results
+      if (AppState.journeys.length > 0) {
+        const firstJourneyDep = new Date(AppState.journeys[0].depTimestamp);
+        const localDateStr = firstJourneyDep.toLocaleDateString('en-CA');
+        DOM.bannerDate.textContent = Formatters.formatDateLabel(localDateStr);
+      }
 
       this.renderResults(AppState.journeys);
       this.updatePaginationControls();
+
+      // Smooth scroll back to top of route banner / results
+      if (paginationOptions.mode && DOM.routeBanner) {
+        DOM.routeBanner.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
     } catch (err) {
       // If manually cancelled by user, stop immediately
       if (AppState.abortController?.signal.aborted) {
@@ -1062,15 +1162,11 @@ function setupEventListeners() {
 
   // Pagination buttons
   DOM.loadEarlierBtn.addEventListener('click', () => {
-    if (AppState.pagination.earlierRef) {
-      SearchController.performSearch({ earlierRef: AppState.pagination.earlierRef });
-    }
+    SearchController.loadEarlier();
   });
 
   DOM.loadLaterBtn.addEventListener('click', () => {
-    if (AppState.pagination.laterRef) {
-      SearchController.performSearch({ laterRef: AppState.pagination.laterRef });
-    }
+    SearchController.loadLater();
   });
 
   // Filters

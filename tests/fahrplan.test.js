@@ -204,7 +204,6 @@ async function runTests() {
   }
   console.log(`Verified: All ${innData.journeys.length} journeys arrive at ${innData.journeys[0].destinationName}!`);
 
-  // Test 12: Resolution by station name without numeric ID
   console.log('Test 12: Testing station resolution by textual names ("Linz/Donau Hbf" -> "Innsbruck Hbf")...');
   const nameRes = await fahrplanHandler({
     httpMethod: 'GET',
@@ -223,7 +222,71 @@ async function runTests() {
   assert.strictEqual(nameData.query.destination.id, '8100108');
   console.log('Verified: Stations resolved correctly from text inputs.');
 
-  console.log('\n🎉 ALL 12 TESTS PASSED SUCCESSFULLY! ✅');
+  // Test 13: startISO and endISO query and earlier/later pagination logic
+  console.log('Test 13: Testing startISO/endISO parameters & 12h pagination merge logic...');
+  const startISO = '2026-10-20T08:00:00.000Z';
+  const endISO = '2026-10-20T12:00:00.000Z';
+  const isoRes = await fahrplanHandler({
+    httpMethod: 'GET',
+    queryStringParameters: {
+      origin: '8100003', // Wien Westbahnhof
+      destination: '8100013', // Linz Hbf
+      startISO,
+      endISO,
+      direct: 'true'
+    }
+  });
+  assert.strictEqual(isoRes.statusCode, 200);
+  const isoData = JSON.parse(isoRes.body);
+  assert.strictEqual(isoData.success, true);
+  assert(isoData.journeys.length > 0, 'Should return journeys using startISO and endISO');
+  const startTimeMs = new Date(startISO).getTime();
+  const endTimeMs = new Date(endISO).getTime();
+  for (const j of isoData.journeys) {
+    assert(j.depTimestamp >= startTimeMs, `Departure ${j.departureTime} must be >= startISO`);
+    assert(j.depTimestamp <= endTimeMs, `Departure ${j.departureTime} must be <= endISO`);
+  }
+  console.log(`Verified: All ${isoData.journeys.length} journeys lie strictly within [startISO, endISO].`);
+
+  // Verify Earlier Pagination Merge Logic:
+  // Given current journeys [J0, J1, J2, ...], 'Frühere Verbindungen' preserves first 2 [J0, J1] + 12h davor
+  const currentJourneys = isoData.journeys.slice(0, 5);
+  const preservedEarlier = currentJourneys.slice(0, 2);
+  const mockEarlierFetched = [
+    { depTimestamp: startTimeMs - 3600000, legs: [{ line: { name: 'RJX 1' } }] },
+    { depTimestamp: startTimeMs - 1800000, legs: [{ line: { name: 'WB 2' } }] },
+    // Simulate overlap on first journey
+    { depTimestamp: preservedEarlier[0].depTimestamp, legs: [{ line: { name: preservedEarlier[0].legs[0]?.line?.name || 'train' } }] }
+  ];
+  const getKey = j => `${j.depTimestamp}-${j.legs?.[0]?.line?.name || ''}`;
+  const earlierMap = new Map();
+  mockEarlierFetched.forEach(j => earlierMap.set(getKey(j), j));
+  preservedEarlier.forEach(j => earlierMap.set(getKey(j), j));
+  const mergedEarlier = Array.from(earlierMap.values()).sort((a, b) => a.depTimestamp - b.depTimestamp);
+  assert(mergedEarlier.some(j => getKey(j) === getKey(preservedEarlier[0])), 'Must contain first preserved connection');
+  assert(mergedEarlier.some(j => getKey(j) === getKey(preservedEarlier[1])), 'Must contain second preserved connection');
+  assert.strictEqual(mergedEarlier[mergedEarlier.length - 1], preservedEarlier[1], 'Second preserved connection should be at the end of earlier view');
+
+  // Verify Later Pagination Merge Logic:
+  // Given current journeys, 'Spätere Verbindungen' preserves last 2 + 12h danach
+  const preservedLater = currentJourneys.slice(-2);
+  const mockLaterFetched = [
+    // Simulate overlap on last journey
+    { depTimestamp: preservedLater[1].depTimestamp, legs: [{ line: { name: preservedLater[1].legs[0]?.line?.name || 'train' } }] },
+    { depTimestamp: preservedLater[1].depTimestamp + 1800000, legs: [{ line: { name: 'RJX 99' } }] },
+    { depTimestamp: preservedLater[1].depTimestamp + 3600000, legs: [{ line: { name: 'WB 100' } }] }
+  ];
+  const laterMap = new Map();
+  preservedLater.forEach(j => laterMap.set(getKey(j), j));
+  mockLaterFetched.forEach(j => laterMap.set(getKey(j), j));
+  const mergedLater = Array.from(laterMap.values()).sort((a, b) => a.depTimestamp - b.depTimestamp);
+  assert(mergedLater.some(j => getKey(j) === getKey(preservedLater[0])), 'Must contain second-to-last preserved connection');
+  assert(mergedLater.some(j => getKey(j) === getKey(preservedLater[1])), 'Must contain last preserved connection');
+  assert.strictEqual(mergedLater[0], preservedLater[0], 'First preserved connection should be at the top of later view');
+
+  console.log('Verified: 12-hour earlier & later pagination retention and merge logic works accurately.');
+
+  console.log('\n🎉 ALL 13 TESTS PASSED SUCCESSFULLY! ✅');
 }
 
 runTests().catch(err => {

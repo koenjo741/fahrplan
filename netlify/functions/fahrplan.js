@@ -323,10 +323,11 @@ async function fetchTimeWindowJourneys(originStation, destinationStation, startT
       }
 
       try {
-        // Individual batch timeout: 9 seconds
+        // Individual batch timeout: up to 12 seconds, bounded by remaining function deadline
+        const batchTimeout = Math.min(12000, Math.max(5000, FUNCTION_DEADLINE_MS - (Date.now() - fetchStartTime)));
         const res = await withTimeout(
           hafas.journeys(originStation.id, destinationStation.id, queryOptions),
-          9000,
+          batchTimeout,
           `HAFAS Batch ${iterations}`
         );
 
@@ -341,7 +342,7 @@ async function fetchTimeWindowJourneys(originStation, destinationStation, startT
         paginationLaterRef = res.laterRef || null;
 
         const lastLeg = batch[batch.length - 1]?.legs?.[0];
-        const lastDep = lastLeg ? new Date(lastLeg.departure) : null;
+        const lastDep = lastLeg ? new Date(lastLeg.departure || lastLeg.plannedDeparture) : null;
 
         // Stop once we have reached or passed the end of the time window
         if (!res.laterRef || (lastDep && lastDep >= endTime)) {
@@ -461,9 +462,16 @@ exports.handler = async (event) => {
       resolveStation(destinationInput)
     ]);
 
-    // 2. Parse departure time in Europe/Vienna timezone
-    const startTime = parseViennaDateTime(dateParam, timeParam);
-    const endTime = new Date(startTime.getTime() + windowHours * 60 * 60 * 1000);
+    // 2. Parse departure time in Europe/Vienna timezone or exact ISO timestamp
+    let startTime;
+    let endTime;
+    if (params.startISO) {
+      startTime = new Date(params.startISO);
+      endTime = params.endISO ? new Date(params.endISO) : new Date(startTime.getTime() + windowHours * 60 * 60 * 1000);
+    } else {
+      startTime = parseViennaDateTime(dateParam, timeParam);
+      endTime = new Date(startTime.getTime() + windowHours * 60 * 60 * 1000);
+    }
 
     // 3. Query journeys from HAFAS
     const { rawJourneys, earlierRef: paginationEarlierRef, laterRef: paginationLaterRef, isPartial } =
@@ -486,8 +494,8 @@ exports.handler = async (event) => {
       query: {
         origin: originStation,
         destination: destinationStation,
-        date: dateParam || new Date().toISOString().slice(0, 10),
-        time: timeParam || new Date().toTimeString().slice(0, 5),
+        date: dateParam || startTime.toISOString().slice(0, 10),
+        time: timeParam || startTime.toISOString().slice(11, 16),
         startISO: startTime.toISOString(),
         endISO: endTime.toISOString(),
         windowHours,
